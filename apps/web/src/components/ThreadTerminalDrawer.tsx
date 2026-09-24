@@ -11,6 +11,7 @@ import {
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
 import {
+  LayoutGrid,
   Plus,
   Square,
   SquareSplitHorizontal,
@@ -70,6 +71,7 @@ import {
 } from "../keybindings";
 import {
   layoutDirection,
+  layoutHasMixedDirections,
   layoutTerminalIds,
   resolveTerminalPaneLayout,
   type TerminalPaneLayout,
@@ -1674,16 +1676,22 @@ export default function ThreadTerminalDrawer({
                   const terminalCount = terminalGroup.terminalIds.length;
                   const isSplitGroup = terminalCount > 1;
                   const rootDirection = layoutDirection(terminalGroup.layout);
+                  const isMixedGroup =
+                    isSplitGroup && layoutHasMixedDirections(terminalGroup.layout);
                   const groupLabel = !isSplitGroup
                     ? "Single"
-                    : rootDirection === "vertical"
-                      ? "Stacked"
-                      : "Side by side";
+                    : isMixedGroup
+                      ? "Mixed"
+                      : rootDirection === "vertical"
+                        ? "Stacked"
+                        : "Side by side";
                   const GroupIcon = !isSplitGroup
                     ? Square
-                    : rootDirection === "vertical"
-                      ? SquareSplitVertical
-                      : SquareSplitHorizontal;
+                    : isMixedGroup
+                      ? LayoutGrid
+                      : rootDirection === "vertical"
+                        ? SquareSplitVertical
+                        : SquareSplitHorizontal;
 
                   return (
                     <div key={terminalGroup.id} className="pb-0.5">

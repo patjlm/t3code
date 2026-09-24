@@ -4,6 +4,7 @@ import {
   buildFlatLayout,
   isTerminalPaneLayout,
   layoutDirection,
+  layoutHasMixedDirections,
   layoutTerminalIds,
   normalizePaneLayout,
   paneLayout,
@@ -116,6 +117,14 @@ describe("terminalPaneLayout", () => {
     expect(layoutDirection(splitPaneLayout(paneLayout("t1"), "t1", "t2", "vertical"))).toBe(
       "vertical",
     );
+  });
+
+  it("detects a tree that nests both split directions", () => {
+    const uniform = splitPaneLayout(paneLayout("t1"), "t1", "t2", "vertical");
+    expect(layoutHasMixedDirections(uniform)).toBe(false);
+
+    const mixed = splitPaneLayout(uniform, "t2", "t3", "horizontal");
+    expect(layoutHasMixedDirections(mixed)).toBe(true);
   });
 
   it("compares layouts structurally", () => {

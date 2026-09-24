@@ -26,6 +26,18 @@ export function layoutDirection(layout: TerminalPaneLayout): TerminalSplitDirect
   return layout.kind === "split" ? layout.direction : null;
 }
 
+/** True once a tree nests both a horizontal and a vertical split, so no single direction describes it. */
+export function layoutHasMixedDirections(layout: TerminalPaneLayout): boolean {
+  const directions = new Set<TerminalSplitDirection>();
+  const collect = (node: TerminalPaneLayout): void => {
+    if (node.kind !== "split") return;
+    directions.add(node.direction);
+    node.children.forEach(collect);
+  };
+  collect(layout);
+  return directions.size > 1;
+}
+
 export function terminalPaneLayoutEqual(
   left: TerminalPaneLayout,
   right: TerminalPaneLayout,
