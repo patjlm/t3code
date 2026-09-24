@@ -11,6 +11,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 import {
+  isTerminalPaneLayout,
   layoutTerminalIds,
   paneLayout,
   removePaneFromLayout,
@@ -176,6 +177,11 @@ function terminalGroupsEqual(left: ThreadTerminalGroup[], right: ThreadTerminalG
     const rightGroup = right[index];
     if (!leftGroup || !rightGroup) return false;
     if (leftGroup.id !== rightGroup.id) return false;
+    // A group persisted before nested splits existed has no `layout`, which
+    // would otherwise crash the comparison below on the first normalize pass.
+    if (!isTerminalPaneLayout(leftGroup.layout) || !isTerminalPaneLayout(rightGroup.layout)) {
+      return false;
+    }
     if (!terminalPaneLayoutEqual(leftGroup.layout, rightGroup.layout)) return false;
   }
   return true;

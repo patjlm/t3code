@@ -89,6 +89,19 @@ describe("terminalPaneLayout", () => {
     expect(resolveTerminalPaneLayout(validLayout, ["t1", "t2"])).toEqual(validLayout);
   });
 
+  it("rebuilds a flat layout when a corrupt persisted tree would drop a terminal id", () => {
+    // A duplicated leaf normalizes structurally fine but silently loses "t2" —
+    // must not be trusted, or that terminal disappears from the group.
+    const corruptLayout = {
+      kind: "split" as const,
+      direction: "horizontal" as const,
+      children: [paneLayout("t1"), paneLayout("t1")],
+    };
+    expect(resolveTerminalPaneLayout(corruptLayout, ["t1", "t2"])).toEqual(
+      buildFlatLayout(["t1", "t2"]),
+    );
+  });
+
   it("validates layout shape defensively", () => {
     expect(isTerminalPaneLayout(paneLayout("t1"))).toBe(true);
     expect(isTerminalPaneLayout({ kind: "split", direction: "horizontal", children: [] })).toBe(

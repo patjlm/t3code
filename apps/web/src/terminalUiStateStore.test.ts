@@ -372,4 +372,52 @@ describe("terminalUiStateStore actions", () => {
 
     expect(useTerminalUiStateStore.getState()).toBe(before);
   });
+
+  it("normalizes a group persisted before nested splits existed instead of crashing", () => {
+    const threadKey = scopedThreadKey(THREAD_REF);
+    useTerminalUiStateStore.setState({
+      terminalUiStateByThreadKey: {
+        [threadKey]: {
+          terminalOpen: true,
+          terminalHeight: 280,
+          terminalIds: ["term-1", "term-2"],
+          activeTerminalId: "term-1",
+          // Legacy (pre-nested-split) shape: no `layout`, has `splitDirection`.
+          terminalGroups: [
+            {
+              id: "group-term-1",
+              terminalIds: ["term-1", "term-2"],
+              splitDirection: "vertical",
+            } as never,
+          ],
+          activeTerminalGroupId: "group-term-1",
+        },
+      },
+      suppressedTerminalIdsByThreadKey: {},
+    });
+
+    expect(() =>
+      useTerminalUiStateStore.getState().setActiveTerminal(THREAD_REF, "term-2"),
+    ).not.toThrow();
+
+    const terminalUiState = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalUiState.activeTerminalId).toBe("term-2");
+    expect(terminalUiState.terminalGroups).toEqual([
+      {
+        id: "group-term-1",
+        terminalIds: ["term-1", "term-2"],
+        layout: {
+          kind: "split",
+          direction: "vertical",
+          children: [
+            { kind: "pane", terminalId: "term-1" },
+            { kind: "pane", terminalId: "term-2" },
+          ],
+        },
+      },
+    ]);
+  });
 });

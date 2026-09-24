@@ -58,6 +58,18 @@ export function buildFlatLayout(
  * corrupt, or a pre-nested-split group's bare id list) falls back to the flat
  * layout a legacy group would have rendered.
  */
+/** True when a layout's leaves are exactly `terminalIds`, no duplicates or omissions. */
+function layoutMatchesIds(layout: TerminalPaneLayout, terminalIds: readonly string[]): boolean {
+  const layoutIds = layoutTerminalIds(layout);
+  if (layoutIds.length !== terminalIds.length) return false;
+  const seen = new Set<string>();
+  for (const id of layoutIds) {
+    if (seen.has(id)) return false;
+    seen.add(id);
+  }
+  return terminalIds.every((id) => seen.has(id));
+}
+
 export function resolveTerminalPaneLayout(
   rawLayout: unknown,
   terminalIds: readonly string[],
@@ -65,7 +77,10 @@ export function resolveTerminalPaneLayout(
 ): TerminalPaneLayout {
   if (isTerminalPaneLayout(rawLayout)) {
     const normalized = normalizePaneLayout(rawLayout, new Set(terminalIds));
-    if (normalized) return normalized;
+    // A corrupt persisted layout (e.g. a duplicated leaf) can normalize to a
+    // tree that drops one of `terminalIds` entirely; only trust it once its
+    // leaves are a one-to-one match, otherwise fall through to a flat rebuild.
+    if (normalized && layoutMatchesIds(normalized, terminalIds)) return normalized;
   }
   return buildFlatLayout(terminalIds, legacyDirection);
 }
