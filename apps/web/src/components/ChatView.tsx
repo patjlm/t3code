@@ -1024,6 +1024,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   );
   const storeNewTerminal = useTerminalUiStateStore((state) => state.newTerminal);
   const storeSetActiveTerminal = useTerminalUiStateStore((state) => state.setActiveTerminal);
+  const storeSetTerminalPaneSizes = useTerminalUiStateStore((state) => state.setTerminalPaneSizes);
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
 
@@ -1176,6 +1177,13 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [bumpFocusRequestId, storeSetActiveTerminal, threadRef],
   );
 
+  const setTerminalPaneSizes = useCallback(
+    (groupId: string, path: readonly number[], sizes: number[] | undefined) => {
+      storeSetTerminalPaneSizes(threadRef, groupId, path, sizes);
+    },
+    [storeSetTerminalPaneSizes, threadRef],
+  );
+
   const closeTerminal = useCallback(
     (terminalId: string) => {
       const fallbackExitWrite = () =>
@@ -1260,6 +1268,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
           keybindings={keybindings}
           onActiveTerminalChange={activateTerminal}
           onCloseTerminal={closeTerminal}
+          onPaneSizesChange={setTerminalPaneSizes}
           onHeightChange={setTerminalHeight}
           onAddTerminalContext={handleAddTerminalContext}
           terminalLabelsById={terminalLabelsById}
@@ -1283,6 +1292,11 @@ interface PersistentThreadTerminalPanelProps {
   onNewTerminal: () => void;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
+  onPaneSizesChange: (
+    groupId: string,
+    path: readonly number[],
+    sizes: number[] | undefined,
+  ) => void;
   splitShortcutLabel?: string | undefined;
   splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
@@ -1302,6 +1316,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   onNewTerminal,
   onActiveTerminalChange,
   onCloseTerminal,
+  onPaneSizesChange,
   splitShortcutLabel,
   splitVerticalShortcutLabel,
   newShortcutLabel,
@@ -1429,6 +1444,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       closeShortcutLabel={closeShortcutLabel}
       onActiveTerminalChange={onActiveTerminalChange}
       onCloseTerminal={onCloseTerminal}
+      onPaneSizesChange={onPaneSizesChange}
       onHeightChange={() => undefined}
       onAddTerminalContext={onAddTerminalContext}
       terminalLabelsById={terminalLabelsById}
@@ -4978,6 +4994,13 @@ export default function ChatView(props: ChatViewProps) {
       setTerminalFocusRequestId((value) => value + 1);
     },
     [activeRightPanelSurface, activeThreadRef, closeTerminalMutation, storeCloseTerminal],
+  );
+  const setPanelTerminalPaneSizes = useCallback(
+    (surfaceId: string, path: readonly number[], sizes: number[] | undefined) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore.getState().setTerminalPaneSizes(activeThreadRef, surfaceId, path, sizes);
+    },
+    [activeThreadRef],
   );
   const requestCloseTerminal = useCallback(
     (terminalId: string) => {
@@ -9553,6 +9576,7 @@ export default function ChatView(props: ChatViewProps) {
         onNewTerminal={addTerminalSurface}
         onActiveTerminalChange={activatePanelTerminal}
         onCloseTerminal={closePanelTerminal}
+        onPaneSizesChange={setPanelTerminalPaneSizes}
         splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
         splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
