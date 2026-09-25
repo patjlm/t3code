@@ -316,6 +316,22 @@ export const BrowserCustomSearchUrl = Schema.String.check(
   Schema.isMaxLength(BROWSER_CUSTOM_SEARCH_URL_MAX_LENGTH),
 );
 
+/**
+ * Whether a plain click on a terminal link (URL or file path) activates it,
+ * or whether activation requires holding Cmd/Ctrl. Off by default so a plain
+ * click keeps opening links, matching every terminal before this preference
+ * existed; turning it on makes a plain click select/copy text instead.
+ */
+export const DEFAULT_TERMINAL_LINKS_REQUIRE_MODIFIER_CLICK = false;
+
+/**
+ * Whether selecting text in the terminal pops up an "Add to chat" / "Copy"
+ * action menu next to the selection. On by default, matching every terminal
+ * before this preference existed; turning it off leaves selection silent,
+ * relying on the OS copy shortcut or the right-click menu instead.
+ */
+export const DEFAULT_TERMINAL_SHOW_SELECTION_ACTIONS = true;
+
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
@@ -398,6 +414,20 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("")),
   ),
 
+  /**
+   * Whether opening a terminal link (URL or file path) requires Cmd/Ctrl to
+   * be held on click, so a plain click can select and copy the text instead.
+   */
+  terminalLinksRequireModifierClick: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_LINKS_REQUIRE_MODIFIER_CLICK)),
+  ),
+  /**
+   * Whether selecting text in the terminal shows the "Add to chat" / "Copy"
+   * action popup.
+   */
+  terminalShowSelectionActions: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_SHOW_SELECTION_ACTIONS)),
+  ),
   browserAutoShowFloatingPreview: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW)),
   ),
@@ -1682,6 +1712,8 @@ export const ClientSettingsPatch = Schema.Struct({
   browserLinkTarget: Schema.optionalKey(BrowserLinkTarget),
   browserSearchEngine: Schema.optionalKey(BrowserSearchEngine),
   browserCustomSearchUrl: Schema.optionalKey(BrowserCustomSearchUrl),
+  terminalLinksRequireModifierClick: Schema.optionalKey(Schema.Boolean),
+  terminalShowSelectionActions: Schema.optionalKey(Schema.Boolean),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),

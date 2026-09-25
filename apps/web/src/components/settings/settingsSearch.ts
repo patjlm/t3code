@@ -909,6 +909,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "terminal-link-modifier-click",
+    title: "Require Cmd/Ctrl-click to open terminal links",
+    to: "/settings/appearance",
+    searchTerms: ["terminal links file paths ctrl cmd modifier"],
+  },
+  {
+    id: "terminal-selection-actions",
+    title: "Show terminal selection actions popup",
+    to: "/settings/appearance",
+    searchTerms: ["terminal add to chat popup selecting text"],
+  },
+  {
     id: "browser-auto-show-floating-preview",
     title: "Auto-show floating preview",
     to: "/settings/browser",
