@@ -335,6 +335,14 @@ export const BrowserCustomSearchUrl = Schema.String.check(
   Schema.isMaxLength(BROWSER_CUSTOM_SEARCH_URL_MAX_LENGTH),
 );
 
+/**
+ * Whether a plain click on a terminal link (URL or file path) activates it,
+ * or whether activation requires holding Cmd/Ctrl. Off by default so a plain
+ * click keeps opening links, matching every terminal before this preference
+ * existed; turning it on makes a plain click select/copy text instead.
+ */
+export const DEFAULT_TERMINAL_LINKS_REQUIRE_MODIFIER_CLICK = false;
+
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
@@ -453,6 +461,13 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("")),
   ),
 
+  /**
+   * Whether opening a terminal link (URL or file path) requires Cmd/Ctrl to
+   * be held on click, so a plain click can select and copy the text instead.
+   */
+  terminalLinksRequireModifierClick: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_LINKS_REQUIRE_MODIFIER_CLICK)),
+  ),
   browserAutoShowFloatingPreview: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW)),
   ),
@@ -2068,6 +2083,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserLinkTarget: Schema.optionalKey(BrowserLinkTarget),
   browserSearchEngine: Schema.optionalKey(BrowserSearchEngine),
   browserCustomSearchUrl: Schema.optionalKey(BrowserCustomSearchUrl),
+  terminalLinksRequireModifierClick: Schema.optionalKey(Schema.Boolean),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { msg, useGT, useMessages } from "gt-react";
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+  DEFAULT_TERMINAL_LINKS_REQUIRE_MODIFIER_CLICK,
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
   type EffortDisplay,
@@ -23,6 +24,7 @@ import { useCustomThemes } from "../../hooks/useCustomThemes";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { useTheme } from "../../hooks/useTheme";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { useClientSettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -84,6 +86,45 @@ const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   label: msg("Word", { $context: "show effort as a word" }),
   bars: msg("Bars", { $context: "show effort as bars" }),
 };
+
+function TerminalLinkModifierClickSetting() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
+  const requireModifierClick = useClientSettings(
+    (settings) => settings.terminalLinksRequireModifierClick,
+  );
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("terminal-link-modifier-click")}
+      description={gt(
+        "Require Cmd/Ctrl-click to open links and file paths in the terminal, so a plain click selects the text instead.",
+      )}
+      resetAction={
+        requireModifierClick !== DEFAULT_TERMINAL_LINKS_REQUIRE_MODIFIER_CLICK ? (
+          <SettingResetButton
+            ariaLabel={gt("Reset terminal link modifier click to default")}
+            onClick={() =>
+              updateSettings({
+                terminalLinksRequireModifierClick: DEFAULT_TERMINAL_LINKS_REQUIRE_MODIFIER_CLICK,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={requireModifierClick}
+          aria-label={gt("Require Cmd/Ctrl-click to open terminal links")}
+          onCheckedChange={(checked) =>
+            updateSettings({ terminalLinksRequireModifierClick: Boolean(checked) })
+          }
+        />
+      }
+    />
+  );
+}
 
 export function AppearanceSettingsPanel() {
   const searchableSetting = useSearchableSetting();
@@ -493,6 +534,10 @@ export function AppearanceSettingsPanel() {
             }
           />
         </AdvancedSettings>
+      </SettingsSection>
+
+      <SettingsSection id="terminal" title={gt("Terminal")}>
+        <TerminalLinkModifierClickSetting />
       </SettingsSection>
 
       <TypographySection />

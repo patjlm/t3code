@@ -1180,6 +1180,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "terminal-link-modifier-click",
+    title: msg("Require Cmd/Ctrl-click to open terminal links"),
+    to: "/settings/appearance",
+    searchTerms: ["terminal links file paths ctrl cmd modifier"],
+  },
+  {
     id: "browser-auto-show-floating-preview",
     title: msg("Auto-show floating preview"),
     to: "/settings/browser",
