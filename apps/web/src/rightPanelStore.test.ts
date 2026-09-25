@@ -263,6 +263,7 @@ describe("rightPanelStore", () => {
               resourceId: "term-1",
               terminalIds: ["term-1"],
               activeTerminalId: "term-1",
+              layout: { kind: "pane", terminalId: "term-1" },
             },
           ],
         },
@@ -831,6 +832,7 @@ describe("rightPanelStore", () => {
         resourceId: "term-1",
         terminalIds: ["term-1"],
         activeTerminalId: "term-1",
+        layout: { kind: "pane", terminalId: "term-1" },
       },
       {
         id: "terminal:term-2",
@@ -838,6 +840,7 @@ describe("rightPanelStore", () => {
         resourceId: "term-2",
         terminalIds: ["term-2"],
         activeTerminalId: "term-2",
+        layout: { kind: "pane", terminalId: "term-2" },
       },
     ]);
     expect(state.activeSurfaceId).toBe("terminal:term-2");
@@ -853,6 +856,14 @@ describe("rightPanelStore", () => {
       resourceId: "term-1",
       terminalIds: ["term-1", "term-2"],
       activeTerminalId: "term-2",
+      layout: {
+        kind: "split",
+        direction: "horizontal",
+        children: [
+          { kind: "pane", terminalId: "term-1" },
+          { kind: "pane", terminalId: "term-2" },
+        ],
+      },
     });
 
     useRightPanelStore.getState().activateTerminal(refA, "terminal:term-1", "term-1");
@@ -863,6 +874,7 @@ describe("rightPanelStore", () => {
       resourceId: "term-1",
       terminalIds: ["term-2"],
       activeTerminalId: "term-2",
+      layout: { kind: "pane", terminalId: "term-2" },
     });
   });
 
@@ -876,7 +888,43 @@ describe("rightPanelStore", () => {
       resourceId: "term-1",
       terminalIds: ["term-1", "term-2"],
       activeTerminalId: "term-2",
-      splitDirection: "vertical",
+      layout: {
+        kind: "split",
+        direction: "vertical",
+        children: [
+          { kind: "pane", terminalId: "term-1" },
+          { kind: "pane", terminalId: "term-2" },
+        ],
+      },
+    });
+  });
+
+  it("nests a split inside the active pane instead of re-splitting the whole surface", () => {
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().splitTerminal(refA, "terminal:term-1", "term-2", "vertical");
+    useRightPanelStore.getState().splitTerminal(refA, "terminal:term-1", "term-3", "horizontal");
+
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "terminal:term-1",
+      kind: "terminal",
+      resourceId: "term-1",
+      terminalIds: ["term-1", "term-2", "term-3"],
+      activeTerminalId: "term-3",
+      layout: {
+        kind: "split",
+        direction: "vertical",
+        children: [
+          { kind: "pane", terminalId: "term-1" },
+          {
+            kind: "split",
+            direction: "horizontal",
+            children: [
+              { kind: "pane", terminalId: "term-2" },
+              { kind: "pane", terminalId: "term-3" },
+            ],
+          },
+        ],
+      },
     });
   });
 
