@@ -188,6 +188,11 @@ describe("GhosttyTerminalSurface visibility", () => {
           }),
         );
       },
+      wheel(deltaY: number, deltaMode = 0) {
+        canvas.dispatchEvent(
+          Object.assign(new Event("wheel", { cancelable: true }), { deltaY, deltaMode }),
+        );
+      },
       async create(options: Partial<GhosttyTerminalSurfaceOptions> = {}) {
         const surface = await GhosttyTerminalSurface.create(mount as unknown as HTMLElement, {
           theme: {
@@ -303,6 +308,21 @@ describe("GhosttyTerminalSurface visibility", () => {
 
     expect(surface.getSelection()).toBe("");
     expect(surface.hasSelection()).toBe(false);
+  });
+
+  it("scrolls back to the live prompt when pasting while scrolled into history", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    for (let index = 0; index < 100; index += 1) surface.write(`line ${index}\r\n`);
+    harness.flushFrame();
+
+    harness.wheel(-100_000);
+    expect(surface.isAtBottom()).toBe(false);
+
+    await surface.pasteFromClipboard(() => Promise.resolve("hello"));
+
+    expect(surface.isAtBottom()).toBe(true);
+    expect(harness.onData).toHaveBeenCalled();
   });
 
   it("pastes the terminal selection, and only that, on a Linux middle click", async () => {
