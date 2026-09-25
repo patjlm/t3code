@@ -12,6 +12,7 @@ import { memo, useEffect, useState } from "react";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStableCallback } from "../hooks/useStableCallback";
 import type { TerminalContextSelection } from "../lib/terminalContext";
+import type { TerminalPaneLayoutPath } from "../terminalPaneLayout";
 import { cn } from "~/lib/utils";
 import {
   selectThreadRightPanelState,
@@ -159,6 +160,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     (session) => session.target.terminalId,
   );
   const storeSetTerminalHeight = useTerminalUiStateStore((state) => state.setTerminalHeight);
+  const storeSetTerminalPaneSizes = useTerminalUiStateStore((state) => state.setTerminalPaneSizes);
   const storeSplitTerminal = useTerminalUiStateStore((state) => state.splitTerminal);
   const storeSplitTerminalVertical = useTerminalUiStateStore(
     (state) => state.splitTerminalVertical,
@@ -207,6 +209,11 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const setTerminalHeight = (height: number) => {
     storeSetTerminalHeight(threadRef, height);
   };
+  const setTerminalPaneSizes = useStableCallback(
+    (groupId: string, path: TerminalPaneLayoutPath, sizes: number[] | undefined) => {
+      storeSetTerminalPaneSizes(threadRef, groupId, path, sizes);
+    },
+  );
 
   const launchDrawerTerminal = (place: (terminalId: string) => void) => {
     if (!cwd) return;
@@ -287,6 +294,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
           keybindings={keybindings}
           onActiveTerminalChange={activateTerminal}
           onCloseTerminal={closeTerminal}
+          onPaneSizesChange={setTerminalPaneSizes}
           onHeightChange={setTerminalHeight}
           onAddTerminalContext={handleAddTerminalContext}
           terminalLabelsById={terminalLabelsById}
@@ -310,6 +318,11 @@ export interface PersistentThreadTerminalPanelProps {
   onNewTerminal: () => void;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
+  onPaneSizesChange?: (
+    groupId: string,
+    path: TerminalPaneLayoutPath,
+    sizes: number[] | undefined,
+  ) => void;
   splitShortcutLabel?: string | undefined;
   splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
@@ -329,6 +342,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   onNewTerminal,
   onActiveTerminalChange,
   onCloseTerminal,
+  onPaneSizesChange,
   splitShortcutLabel,
   splitVerticalShortcutLabel,
   newShortcutLabel,
@@ -423,6 +437,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
       closeShortcutLabel={closeShortcutLabel}
       onActiveTerminalChange={onActiveTerminalChange}
       onCloseTerminal={onCloseTerminal}
+      {...(onPaneSizesChange ? { onPaneSizesChange } : {})}
       onHeightChange={() => undefined}
       onAddTerminalContext={onAddTerminalContext}
       terminalLabelsById={terminalLabelsById}

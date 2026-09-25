@@ -4005,6 +4005,15 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
   const activateRightPanelSurfaceStable = useStableCallback(activateRightPanelSurface);
+  const setPanelTerminalPaneSizes = (
+    surfaceId: string,
+    path: readonly number[],
+    sizes: number[] | undefined,
+  ) => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().setTerminalPaneSizes(activeThreadRef, surfaceId, path, sizes);
+  };
+  const setPanelTerminalPaneSizesStable = useStableCallback(setPanelTerminalPaneSizes);
   const toggleRightPanel = () => {
     if (!activeThreadRef) return;
     if (rightPanelOpen) {
@@ -7996,6 +8005,7 @@ export default function ChatView(props: ChatViewProps) {
         onNewTerminal: addTerminalSurfaceStable,
         onActiveTerminalChange: activatePanelTerminalStable,
         onCloseTerminal: closePanelTerminalStable,
+        onPaneSizesChange: setPanelTerminalPaneSizesStable,
         splitShortcutLabel: splitTerminalShortcutLabel ?? undefined,
         splitVerticalShortcutLabel: splitTerminalVerticalShortcutLabel ?? undefined,
         newShortcutLabel: newTerminalShortcutLabel ?? undefined,
