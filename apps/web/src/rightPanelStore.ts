@@ -19,6 +19,14 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { useClosedViewStore } from "./closedViewStore";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
+import {
+  layoutTerminalIds,
+  paneLayout,
+  removePaneFromLayout,
+  resolveTerminalPaneLayout,
+  splitPaneLayout,
+  type TerminalPaneLayout,
+} from "./terminalPaneLayout";
 import type { ChatFileAttachment } from "./types";
 
 const RIGHT_PANEL_KINDS = [
@@ -48,9 +56,10 @@ export type RightPanelSurface =
       id: `terminal:${string}`;
       kind: "terminal";
       resourceId: string;
+      /** Flat membership, always `layoutTerminalIds(layout)` — kept for cheap reads. */
       terminalIds: string[];
       activeTerminalId: string;
-      splitDirection?: "horizontal" | "vertical";
+      layout: TerminalPaneLayout;
     }
   | { id: "diff"; kind: "diff" }
   | { id: "files"; kind: "files" }
@@ -92,7 +101,9 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds the device surface.
-// v14 removes the agents surface; lineage lives in the thread title bar.
+// v14 removes the agents surface (lineage lives in the thread title bar) and replaces a
+// terminal surface's flat `terminalIds` + `splitDirection` with a `layout` tree, so a split
+// nests inside the active pane instead of re-splitting the whole surface.
 const RIGHT_PANEL_STORAGE_VERSION = 14;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
@@ -260,6 +271,7 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   resourceId: terminalId,
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
+  layout: paneLayout(terminalId),
 });
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
@@ -512,7 +524,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     ) {
                       return [];
                     }
-                    const terminalIds =
+                    const rawTerminalIds =
                       "terminalIds" in surface && Array.isArray(surface.terminalIds)
                         ? [
                             ...new Set(
@@ -523,17 +535,30 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                             ),
                           ]
                         : [surface.resourceId];
+                    const safeTerminalIds =
+                      rawTerminalIds.length > 0 ? rawTerminalIds : [surface.resourceId];
                     const activeTerminalId =
                       "activeTerminalId" in surface &&
                       typeof surface.activeTerminalId === "string" &&
-                      terminalIds.includes(surface.activeTerminalId)
+                      safeTerminalIds.includes(surface.activeTerminalId)
                         ? surface.activeTerminalId
-                        : (terminalIds[0] ?? surface.resourceId);
+                        : (safeTerminalIds[0] ?? surface.resourceId);
+                    // Pre-v14 surfaces carry `splitDirection` instead of `layout`.
+                    const legacySplitDirection = (surface as { splitDirection?: unknown })
+                      .splitDirection;
+                    const legacyDirection =
+                      legacySplitDirection === "vertical" ? "vertical" : "horizontal";
+                    const layout = resolveTerminalPaneLayout(
+                      surface.layout,
+                      safeTerminalIds,
+                      legacyDirection,
+                    );
                     return [
                       {
                         ...surface,
-                        terminalIds: terminalIds.length > 0 ? terminalIds : [surface.resourceId],
+                        terminalIds: layoutTerminalIds(layout),
                         activeTerminalId,
+                        layout,
                       },
                     ];
                   })
@@ -767,14 +792,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             activeSurfaceId: surfaceId,
             surfaces: current.surfaces.map((surface) => {
               if (surface.id !== surfaceId || surface.kind !== "terminal") return surface;
-              const { splitDirection: _splitDirection, ...baseSurface } = surface;
+              const alreadyPresent = surface.terminalIds.includes(terminalId);
+              const nextLayout = alreadyPresent
+                ? surface.layout
+                : splitPaneLayout(surface.layout, surface.activeTerminalId, terminalId, direction);
               return {
-                ...baseSurface,
-                terminalIds: surface.terminalIds.includes(terminalId)
-                  ? surface.terminalIds
-                  : [...surface.terminalIds, terminalId],
+                ...surface,
+                layout: nextLayout,
+                terminalIds: alreadyPresent ? surface.terminalIds : layoutTerminalIds(nextLayout),
                 activeTerminalId: terminalId,
-                ...(direction === "vertical" ? { splitDirection: "vertical" as const } : {}),
               };
             }),
           })),
@@ -800,8 +826,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (entry) => entry.id === surfaceId && entry.kind === "terminal",
             );
             if (!surface || surface.kind !== "terminal") return current;
-            const terminalIds = surface.terminalIds.filter((id) => id !== terminalId);
-            if (terminalIds.length === 0) {
+            const nextLayout = removePaneFromLayout(surface.layout, terminalId);
+            if (nextLayout === null) {
               const index = current.surfaces.findIndex((entry) => entry.id === surfaceId);
               const surfaces = current.surfaces.filter((entry) => entry.id !== surfaceId);
               const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
@@ -815,12 +841,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                     : current.activeSurfaceId,
               };
             }
+            const terminalIds = layoutTerminalIds(nextLayout);
             return {
               ...current,
               surfaces: current.surfaces.map((entry) =>
                 entry.id === surfaceId && entry.kind === "terminal"
                   ? {
                       ...entry,
+                      layout: nextLayout,
                       terminalIds,
                       activeTerminalId:
                         entry.activeTerminalId === terminalId
