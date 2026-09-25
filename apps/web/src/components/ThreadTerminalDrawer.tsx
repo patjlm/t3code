@@ -1161,7 +1161,7 @@ function TerminalSessionViewport({
     <div
       ref={attachContainer}
       tabIndex={-1}
-      className="relative h-full w-full overflow-hidden bg-(--terminal-background)"
+      className="relative h-full w-full overflow-hidden bg-(--terminal-background) opacity-60 transition-opacity focus-within:opacity-100"
     />
   );
 }
