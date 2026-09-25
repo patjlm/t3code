@@ -75,8 +75,9 @@ import {
   layoutHasMixedDirections,
   layoutTerminalIds,
   resolveTerminalPaneLayout,
-  type TerminalPaneLayout,
+  type TerminalPaneLayoutPath,
 } from "../terminalPaneLayout";
+import { TerminalPaneTree } from "./TerminalPaneTree";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   MAX_TERMINALS_PER_GROUP,
@@ -1178,6 +1179,11 @@ interface ThreadTerminalDrawerProps {
   closeShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
+  onPaneSizesChange?: (
+    groupId: string,
+    path: TerminalPaneLayoutPath,
+    sizes: number[] | undefined,
+  ) => void;
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
@@ -1226,62 +1232,6 @@ function TerminalActionButton({
         {label}
       </PopoverPopup>
     </Popover>
-  );
-}
-
-interface TerminalPaneTreeProps {
-  layout: TerminalPaneLayout;
-  activeTerminalId: string;
-  renderPane: (terminalId: string) => ReactNode;
-}
-
-/** A leaf keeps the split's grid shape so growing the tree never remounts its terminal. */
-function TerminalPaneTree({ layout, activeTerminalId, renderPane }: TerminalPaneTreeProps) {
-  if (layout.kind === "pane") {
-    return (
-      <div
-        className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
-        style={{ gridTemplateColumns: "minmax(0, 1fr)" }}
-      >
-        <div key={layout.terminalId} className="min-h-0 min-w-0">
-          {renderPane(layout.terminalId)}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div
-      className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
-      style={
-        layout.direction === "vertical"
-          ? { gridTemplateRows: `repeat(${layout.children.length}, minmax(0, 1fr))` }
-          : { gridTemplateColumns: `repeat(${layout.children.length}, minmax(0, 1fr))` }
-      }
-    >
-      {layout.children.map((child, index) => {
-        const isActiveBranch = layoutTerminalIds(child).includes(activeTerminalId);
-        return (
-          <div
-            key={child.kind === "pane" ? child.terminalId : `split-${index}`}
-            className={`min-h-0 min-w-0 ${
-              layout.direction === "vertical"
-                ? "border-t first:border-t-0"
-                : "border-l first:border-l-0"
-            } ${isActiveBranch ? "border-border" : "border-border/70"}`}
-          >
-            {child.kind === "pane" ? (
-              renderPane(child.terminalId)
-            ) : (
-              <TerminalPaneTree
-                layout={child}
-                activeTerminalId={activeTerminalId}
-                renderPane={renderPane}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -1411,6 +1361,7 @@ export default function ThreadTerminalDrawer({
   closeShortcutLabel,
   onActiveTerminalChange,
   onCloseTerminal,
+  onPaneSizesChange,
   onHeightChange,
   onAddTerminalContext,
   keybindings,
@@ -1827,6 +1778,14 @@ export default function ThreadTerminalDrawer({
               <TerminalPaneTree
                 layout={visibleLayout}
                 activeTerminalId={resolvedActiveTerminalId}
+                {...(onPaneSizesChange
+                  ? {
+                      onPaneSizesChange: (path, sizes) => {
+                        const groupId = resolvedTerminalGroups[resolvedActiveGroupIndex]?.id;
+                        if (groupId) onPaneSizesChange(groupId, path, sizes);
+                      },
+                    }
+                  : {})}
                 renderPane={(terminalId) => {
                   const terminalLaunchLocation = resolveTerminalLaunchLocation(terminalId);
                   return (

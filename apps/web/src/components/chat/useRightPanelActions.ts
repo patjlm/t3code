@@ -212,6 +212,15 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     }
   };
   const activateRightPanelSurfaceStable = useStableCallback(activateRightPanelSurface);
+  const setPanelTerminalPaneSizes = (
+    surfaceId: string,
+    path: readonly number[],
+    sizes: number[] | undefined,
+  ) => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().setTerminalPaneSizes(activeThreadRef, surfaceId, path, sizes);
+  };
+  const setPanelTerminalPaneSizesStable = useStableCallback(setPanelTerminalPaneSizes);
   const toggleRightPanel = () => {
     if (!activeThreadRef) return;
     if (rightPanelOpen) {
@@ -327,6 +336,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onToggleDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
+    setPanelTerminalPaneSizesStable,
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
     toggleThreadPanelStable,
