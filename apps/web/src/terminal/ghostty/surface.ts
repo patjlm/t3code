@@ -510,6 +510,13 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
   readonly canActivateLink?: (text: string) => boolean;
+  /**
+   * When true, a plain click on a link starts a normal text selection
+   * instead of activating it; only a Cmd/Ctrl-click opens it. Read live
+   * (hosts can supply a getter) so flipping the preference does not require
+   * recreating the surface.
+   */
+  readonly linksRequireModifierClick?: boolean;
   /** The host must prevent the default menu; native Paste cannot reach a canvas terminal. */
   readonly onContextMenu?: (event: MouseEvent) => void;
 }
@@ -1194,6 +1201,8 @@ export class GhosttyTerminalSurface {
     this.focused = false;
     this.pasteShortcutGesture = null;
     this.refreshHoveredLink();
+    // A selection left on a pane the user moved away from reads as stale.
+    if (this.hasSelection()) this.clearSelection();
     this.cursorOn = true;
     this.requestRender();
   };
@@ -1329,7 +1338,9 @@ export class GhosttyTerminalSurface {
     if (event.button !== 0) return;
     const clickCount = this.recordSelectionClick(event);
     const link = this.linkAt(event.clientX, event.clientY);
-    if (link && !event.shiftKey && clickCount === 1) {
+    const linkModifierSatisfied =
+      !this.options.linksRequireModifierClick || event.metaKey || event.ctrlKey;
+    if (link && !event.shiftKey && clickCount === 1 && linkModifierSatisfied) {
       event.preventDefault();
       event.stopPropagation();
       this.linkActivationPointerId = event.pointerId;

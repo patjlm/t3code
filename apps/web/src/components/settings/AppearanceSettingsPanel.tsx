@@ -2,6 +2,8 @@ import type { CSSProperties } from "react";
 import { useState } from "react";
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+  DEFAULT_TERMINAL_LINKS_REQUIRE_MODIFIER_CLICK,
+  DEFAULT_TERMINAL_SHOW_SELECTION_ACTIONS,
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
   type EnvironmentIdentificationMode,
@@ -19,6 +21,7 @@ import {
 import { useCustomThemes } from "../../hooks/useCustomThemes";
 import { useTheme } from "../../hooks/useTheme";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { useClientSettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -44,6 +47,76 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
   wide: "Wide",
   full: "Full",
 };
+
+function TerminalLinkModifierClickSetting() {
+  const requireModifierClick = useClientSettings(
+    (settings) => settings.terminalLinksRequireModifierClick,
+  );
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("terminal-link-modifier-click")}
+      description="Require Cmd/Ctrl-click to open links and file paths in the terminal, so a plain click selects the text instead."
+      resetAction={
+        requireModifierClick !== DEFAULT_TERMINAL_LINKS_REQUIRE_MODIFIER_CLICK ? (
+          <SettingResetButton
+            label="terminal link modifier click"
+            onClick={() =>
+              updateSettings({
+                terminalLinksRequireModifierClick: DEFAULT_TERMINAL_LINKS_REQUIRE_MODIFIER_CLICK,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={requireModifierClick}
+          aria-label="Require Cmd/Ctrl-click to open terminal links"
+          onCheckedChange={(checked) =>
+            updateSettings({ terminalLinksRequireModifierClick: Boolean(checked) })
+          }
+        />
+      }
+    />
+  );
+}
+
+function TerminalSelectionActionsSetting() {
+  const showSelectionActions = useClientSettings(
+    (settings) => settings.terminalShowSelectionActions,
+  );
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("terminal-selection-actions")}
+      description="Show an Add to chat / Copy popup after selecting text in the terminal."
+      resetAction={
+        showSelectionActions !== DEFAULT_TERMINAL_SHOW_SELECTION_ACTIONS ? (
+          <SettingResetButton
+            label="terminal selection actions popup"
+            onClick={() =>
+              updateSettings({
+                terminalShowSelectionActions: DEFAULT_TERMINAL_SHOW_SELECTION_ACTIONS,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={showSelectionActions}
+          aria-label="Show terminal selection actions popup"
+          onCheckedChange={(checked) =>
+            updateSettings({ terminalShowSelectionActions: Boolean(checked) })
+          }
+        />
+      }
+    />
+  );
+}
 
 export function AppearanceSettingsPanel() {
   const {
@@ -411,6 +484,11 @@ export function AppearanceSettingsPanel() {
             }
           />
         </AdvancedSettings>
+      </SettingsSection>
+
+      <SettingsSection id="terminal" title="Terminal">
+        <TerminalLinkModifierClickSetting />
+        <TerminalSelectionActionsSetting />
       </SettingsSection>
 
       <TypographySection />
