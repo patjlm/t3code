@@ -488,6 +488,39 @@ describe("ClientSettings recording input overlays", () => {
   });
 });
 
+describe("ClientSettings terminal link modifier click", () => {
+  it("defaults to off so a plain click keeps opening terminal links", () => {
+    expect(decodeClientSettings({}).terminalLinksRequireModifierClick).toBe(false);
+  });
+
+  it("accepts an explicit opt-in", () => {
+    expect(
+      decodeClientSettings({ terminalLinksRequireModifierClick: true })
+        .terminalLinksRequireModifierClick,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ terminalLinksRequireModifierClick: true })
+        .terminalLinksRequireModifierClick,
+    ).toBe(true);
+  });
+});
+
+describe("ClientSettings terminal selection actions popup", () => {
+  it("defaults to on so selecting text keeps showing the action popup", () => {
+    expect(decodeClientSettings({}).terminalShowSelectionActions).toBe(true);
+  });
+
+  it("accepts an explicit opt-out", () => {
+    expect(
+      decodeClientSettings({ terminalShowSelectionActions: false }).terminalShowSelectionActions,
+    ).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ terminalShowSelectionActions: false })
+        .terminalShowSelectionActions,
+    ).toBe(false);
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

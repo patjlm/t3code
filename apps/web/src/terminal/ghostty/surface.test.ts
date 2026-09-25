@@ -167,7 +167,14 @@ describe("GhosttyTerminalSurface visibility", () => {
       resize() {
         for (const callback of resizeCallbacks) callback();
       },
-      pointer(type: string, clientX: number, buttons: number, shiftKey = false, button = 0) {
+      pointer(
+        type: string,
+        clientX: number,
+        buttons: number,
+        shiftKey = false,
+        button = 0,
+        ctrlKey = false,
+      ) {
         canvas.dispatchEvent(
           Object.assign(new Event(type, { cancelable: true }), {
             clientX,
@@ -176,6 +183,8 @@ describe("GhosttyTerminalSurface visibility", () => {
             button,
             buttons,
             shiftKey,
+            ctrlKey,
+            metaKey: false,
           }),
         );
       },
@@ -280,6 +289,22 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.renderedSnapshot.rowData[0]?.cells.some((cell) => cell.selected)).toBe(false);
   });
 
+  it("clears the selection when the terminal loses focus", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("hello world");
+    harness.flushFrame();
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointermove", 37, 1);
+    harness.pointer("pointerup", 37, 0);
+    expect(surface.getSelection()).toBe("hello");
+
+    surface.input.dispatchEvent(new Event("blur"));
+
+    expect(surface.getSelection()).toBe("");
+    expect(surface.hasSelection()).toBe(false);
+  });
+
   it("pastes the terminal selection, and only that, on a Linux middle click", async () => {
     const harness = createHarness();
     const readText = vi.fn(async () => "clipboard text");
@@ -366,6 +391,34 @@ describe("GhosttyTerminalSurface visibility", () => {
     harness.pointer("pointerup", 37, 0, true);
     expect(onLinkActivate).not.toHaveBeenCalled();
     expect(surface.getSelection()).toBe("https");
+  });
+
+  it("selects instead of activating a link on a plain click when modifier-click is required", async () => {
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const surface = await harness.create({ onLinkActivate, linksRequireModifierClick: true });
+    surface.write("https://example.com");
+    harness.flushFrame();
+
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointermove", 37, 1);
+    harness.pointer("pointerup", 37, 0);
+
+    expect(onLinkActivate).not.toHaveBeenCalled();
+    expect(surface.getSelection()).toBe("https");
+  });
+
+  it("activates a link on Ctrl-click when modifier-click is required", async () => {
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const surface = await harness.create({ onLinkActivate, linksRequireModifierClick: true });
+    surface.write("https://example.com");
+    harness.flushFrame();
+
+    harness.pointer("pointerdown", 5, 1, false, 0, true);
+    harness.pointer("pointerup", 5, 0, false, 0, true);
+
+    expect(onLinkActivate).toHaveBeenCalledOnce();
   });
 
   it("does not activate a link replaced before pointer release", async () => {
