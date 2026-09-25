@@ -181,7 +181,13 @@ it("keeps held Kitty keys and the original surface through split, focus, and uns
       height={280}
       terminalIds={terminalIds}
       activeTerminalId="original"
-      terminalGroups={[{ id: "group", terminalIds }]}
+      terminalGroups={[
+        {
+          id: "group",
+          terminalIds,
+          layout: { kind: "pane", terminalId: terminalIds[0] ?? "original" },
+        },
+      ]}
       activeTerminalGroupId="group"
       focusRequestId={0}
       onSplitTerminal={state.otherCommand}
