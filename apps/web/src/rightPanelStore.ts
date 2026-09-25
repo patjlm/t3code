@@ -23,8 +23,10 @@ import {
   paneLayout,
   removePaneFromLayout,
   resolveTerminalPaneLayout,
+  setSplitSizesAtPath,
   splitPaneLayout,
   type TerminalPaneLayout,
+  type TerminalPaneLayoutPath,
 } from "./terminalPaneLayout";
 
 const RIGHT_PANEL_KINDS = [
@@ -166,6 +168,12 @@ interface RightPanelStoreState {
     direction?: "horizontal" | "vertical",
   ) => void;
   activateTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
+  setTerminalPaneSizes: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    path: TerminalPaneLayoutPath,
+    sizes: number[] | undefined,
+  ) => void;
   closeTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
   activateSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
@@ -683,6 +691,25 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : surface,
             ),
           })),
+        ),
+      // Dragging a divider isn't a choice about which surface is shown, so it
+      // goes through automaticUpdate rather than userAction.
+      setTerminalPaneSizes: (ref, surfaceId, path, sizes) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => {
+            const surface = current.surfaces.find(
+              (entry) => entry.id === surfaceId && entry.kind === "terminal",
+            );
+            if (!surface || surface.kind !== "terminal") return current;
+            const nextLayout = setSplitSizesAtPath(surface.layout, path, sizes);
+            if (nextLayout === surface.layout) return current;
+            return {
+              ...current,
+              surfaces: current.surfaces.map((entry) =>
+                entry.id === surfaceId ? { ...entry, layout: nextLayout } : entry,
+              ),
+            };
+          }),
         ),
       closeTerminal: (ref, surfaceId, terminalId) =>
         set((state) =>
