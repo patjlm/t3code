@@ -494,6 +494,20 @@ export function TerminalViewport({
     }),
   );
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
+  const linksRequireModifierClick = useClientSettings(
+    (settings) => settings.terminalLinksRequireModifierClick,
+  );
+  const linksRequireModifierClickRef = useRef(linksRequireModifierClick);
+  useEffect(() => {
+    linksRequireModifierClickRef.current = linksRequireModifierClick;
+  }, [linksRequireModifierClick]);
+  const showSelectionActions = useClientSettings(
+    (settings) => settings.terminalShowSelectionActions,
+  );
+  const showSelectionActionsRef = useRef(showSelectionActions);
+  useEffect(() => {
+    showSelectionActionsRef.current = showSelectionActions;
+  }, [showSelectionActions]);
   const terminalSession = useAttachedTerminalSession({
     environmentId,
     terminal: {
@@ -617,6 +631,9 @@ export function TerminalViewport({
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
+        get linksRequireModifierClick() {
+          return linksRequireModifierClickRef.current;
+        },
         // The surface listens from construction, so a right-click can land
         // while `create` is still awaiting WASM — before the handler below it
         // exists. The ref is only assigned once that setup has run.
@@ -823,7 +840,7 @@ export function TerminalViewport({
       };
 
       const showSelectionAction = async (pointer: SelectionActionPoint | null) => {
-        if (!localApi) {
+        if (!localApi || !showSelectionActionsRef.current) {
           clearSelectionAction();
           return;
         }

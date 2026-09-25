@@ -785,6 +785,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pr links github browser external click default pull request view panel"],
   },
   {
+    id: "terminal-link-modifier-click",
+    title: "Require Cmd/Ctrl-click to open terminal links",
+    to: "/settings/integrations",
+    searchTerms: ["terminal links file paths ctrl cmd modifier"],
+  },
+  {
+    id: "terminal-selection-actions",
+    title: "Show terminal selection actions popup",
+    to: "/settings/integrations",
+    searchTerms: ["terminal add to chat popup selecting text"],
+  },
+  {
     id: "browser-auto-show-floating-preview",
     title: "Auto-show floating preview",
     to: "/settings/integrations",
