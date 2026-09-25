@@ -4,6 +4,15 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 import {
+  isTerminalPaneLayout,
+  layoutTerminalIds,
+  paneLayout,
+  removePaneFromLayout,
+  resolveTerminalPaneLayout,
+  splitPaneLayout,
+  terminalPaneLayoutEqual,
+} from "./terminalPaneLayout";
+import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
@@ -89,6 +98,12 @@ function normalizeTerminalGroupIds(terminalIds: string[]): string[] {
   return normalizeTerminalIds(terminalIds);
 }
 
+/** A group from before nested splits existed carries `splitDirection` instead of `layout`. */
+function legacyGroupDirection(group: ThreadTerminalGroup): "horizontal" | "vertical" {
+  const splitDirection = (group as { splitDirection?: unknown }).splitDirection;
+  return splitDirection === "vertical" ? "vertical" : "horizontal";
+}
+
 function normalizeTerminalGroups(
   terminalGroups: ThreadTerminalGroup[],
   terminalIds: string[],
@@ -116,10 +131,15 @@ function normalizeTerminalGroups(
       group.id.trim().length > 0
         ? group.id.trim()
         : fallbackGroupId(groupTerminalIds[0] ?? terminalIds[0] ?? "");
+    const layout = resolveTerminalPaneLayout(
+      group.layout,
+      groupTerminalIds,
+      legacyGroupDirection(group),
+    );
     nextGroups.push({
       id: assignUniqueGroupId(baseGroupId, usedGroupIds),
-      terminalIds: groupTerminalIds,
-      ...(group.splitDirection === "vertical" ? { splitDirection: "vertical" as const } : {}),
+      terminalIds: layoutTerminalIds(layout),
+      layout,
     });
   }
 
@@ -128,6 +148,7 @@ function normalizeTerminalGroups(
     nextGroups.push({
       id: assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds),
       terminalIds: [terminalId],
+      layout: paneLayout(terminalId),
     });
   }
 
@@ -149,12 +170,12 @@ function terminalGroupsEqual(left: ThreadTerminalGroup[], right: ThreadTerminalG
     const rightGroup = right[index];
     if (!leftGroup || !rightGroup) return false;
     if (leftGroup.id !== rightGroup.id) return false;
-    if (
-      (leftGroup.splitDirection ?? "horizontal") !== (rightGroup.splitDirection ?? "horizontal")
-    ) {
+    // A group persisted before nested splits existed has no `layout`, which
+    // would otherwise crash the comparison below on the first normalize pass.
+    if (!isTerminalPaneLayout(leftGroup.layout) || !isTerminalPaneLayout(rightGroup.layout)) {
       return false;
     }
-    if (!arraysEqual(leftGroup.terminalIds, rightGroup.terminalIds)) return false;
+    if (!terminalPaneLayoutEqual(leftGroup.layout, rightGroup.layout)) return false;
   }
   return true;
 }
@@ -240,7 +261,7 @@ function copyTerminalGroups(groups: ThreadTerminalGroup[]): ThreadTerminalGroup[
   return groups.map((group) => ({
     id: group.id,
     terminalIds: [...group.terminalIds],
-    ...(group.splitDirection === "vertical" ? { splitDirection: "vertical" as const } : {}),
+    layout: group.layout,
   }));
 }
 
@@ -264,18 +285,27 @@ function upsertTerminalIntoGroups(
 
   const existingGroupIndex = findGroupIndexByTerminalId(terminalGroups, terminalId);
   if (existingGroupIndex >= 0) {
-    terminalGroups[existingGroupIndex]!.terminalIds = terminalGroups[
-      existingGroupIndex
-    ]!.terminalIds.filter((id) => id !== terminalId);
-    if (terminalGroups[existingGroupIndex]!.terminalIds.length === 0) {
+    const existingGroup = terminalGroups[existingGroupIndex]!;
+    const nextLayout = removePaneFromLayout(existingGroup.layout, terminalId);
+    if (nextLayout === null) {
       terminalGroups.splice(existingGroupIndex, 1);
+    } else {
+      terminalGroups[existingGroupIndex] = {
+        id: existingGroup.id,
+        terminalIds: layoutTerminalIds(nextLayout),
+        layout: nextLayout,
+      };
     }
   }
 
   if (effectiveMode === "new") {
     const usedGroupIds = new Set(terminalGroups.map((group) => group.id));
     const nextGroupId = assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds);
-    terminalGroups.push({ id: nextGroupId, terminalIds: [terminalId] });
+    terminalGroups.push({
+      id: nextGroupId,
+      terminalIds: [terminalId],
+      layout: paneLayout(terminalId),
+    });
     return normalizeThreadTerminalUiState({
       ...normalized,
       terminalOpen: true,
@@ -298,7 +328,11 @@ function upsertTerminalIntoGroups(
       fallbackGroupId(normalized.activeTerminalId),
       usedGroupIds,
     );
-    terminalGroups.push({ id: nextGroupId, terminalIds: [normalized.activeTerminalId] });
+    terminalGroups.push({
+      id: nextGroupId,
+      terminalIds: [normalized.activeTerminalId],
+      layout: paneLayout(normalized.activeTerminalId),
+    });
     activeGroupIndex = terminalGroups.length - 1;
   }
 
@@ -317,17 +351,14 @@ function upsertTerminalIntoGroups(
   }
 
   if (!destinationTerminalIdSet.has(terminalId)) {
-    const anchorIndex = destinationGroup.terminalIds.indexOf(normalized.activeTerminalId);
-    if (anchorIndex >= 0) {
-      destinationGroup.terminalIds.splice(anchorIndex + 1, 0, terminalId);
-    } else {
-      destinationGroup.terminalIds.push(terminalId);
-    }
-  }
-  if (splitDirection === "vertical") {
-    destinationGroup.splitDirection = "vertical";
-  } else {
-    delete destinationGroup.splitDirection;
+    const nextLayout = splitPaneLayout(
+      destinationGroup.layout,
+      normalized.activeTerminalId,
+      terminalId,
+      splitDirection,
+    );
+    destinationGroup.layout = nextLayout;
+    destinationGroup.terminalIds = layoutTerminalIds(nextLayout);
   }
 
   return normalizeThreadTerminalUiState({
@@ -423,9 +454,13 @@ function closeThreadTerminal(
 
   const terminalGroups: ThreadTerminalGroup[] = [];
   for (const group of normalized.terminalGroups) {
-    const terminalIds = group.terminalIds.filter((id) => id !== terminalId);
-    if (terminalIds.length > 0) {
-      terminalGroups.push({ ...group, terminalIds });
+    const nextLayout = removePaneFromLayout(group.layout, terminalId);
+    if (nextLayout !== null) {
+      terminalGroups.push({
+        id: group.id,
+        terminalIds: layoutTerminalIds(nextLayout),
+        layout: nextLayout,
+      });
     }
   }
 
