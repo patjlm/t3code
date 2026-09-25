@@ -628,6 +628,10 @@ function TerminalSessionViewport({
     ...(runtimeEnv ? { env: runtimeEnv } : {}),
     ...(providerInstanceId ? { providerInstanceId } : {}),
   });
+  const linksRequireModifierClick = useClientSettings(
+    (settings) => settings.terminalLinksRequireModifierClick,
+  );
+  const readLinksRequireModifierClick = useEffectEvent(() => linksRequireModifierClick);
   // Attaching starts with the viewport, while the WASM surface is still loading;
   // the surface reads the session itself, so output chunks never re-render here.
   useAtomMount(terminalSessionAtom);
@@ -741,6 +745,9 @@ function TerminalSessionViewport({
         canActivateLink: (text) => canActivateTerminalLink(text),
         validateLink: (text) => validateTerminalLink(text),
         onLinkHover: (text) => setLinkPath(text !== null && !isTerminalUrl(text) ? text : null),
+        get linksRequireModifierClick() {
+          return readLinksRequireModifierClick();
+        },
         // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);

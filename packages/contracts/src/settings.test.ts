@@ -549,3 +549,20 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("ClientSettings terminal link modifier click", () => {
+  it("defaults to off so a plain click keeps opening terminal links", () => {
+    expect(decodeClientSettings({}).terminalLinksRequireModifierClick).toBe(false);
+  });
+
+  it("accepts an explicit opt-in", () => {
+    expect(
+      decodeClientSettings({ terminalLinksRequireModifierClick: true })
+        .terminalLinksRequireModifierClick,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ terminalLinksRequireModifierClick: true })
+        .terminalLinksRequireModifierClick,
+    ).toBe(true);
+  });
+});
