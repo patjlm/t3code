@@ -548,6 +548,13 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
   /**
+   * When true, a plain click on a link starts a normal text selection
+   * instead of activating it; only a Cmd/Ctrl-click opens it. Read live
+   * (hosts can supply a getter) so flipping the preference does not require
+   * recreating the surface.
+   */
+  readonly linksRequireModifierClick?: boolean;
+  /**
    * A right-click the running application did not claim through mouse
    * reporting. The host owns the menu, so it also owns preventing the browser
    * default — whose Paste entry can never reach a canvas terminal.
@@ -1177,6 +1184,9 @@ export class GhosttyTerminalSurface {
   private readonly onBlur = () => {
     this.focused = false;
     this.refreshHoveredLink();
+    // A selection left over from a pane the user has moved on from reads as
+    // stale highlighted text, not an active selection — drop it with focus.
+    if (this.hasSelection()) this.clearSelection();
     // Suppressions survive blur deliberately: a shortcut that moves focus (for
     // example terminal-toggle) must still swallow its own keyup if focus comes
     // back before release. Stale entries are harmless — an encoding keydown
@@ -1304,7 +1314,9 @@ export class GhosttyTerminalSurface {
     if (event.button !== 0) return;
     const clickCount = this.recordSelectionClick(event);
     const link = this.linkAt(event.clientX, event.clientY);
-    if (link && !event.shiftKey && clickCount === 1) {
+    const linkModifierSatisfied =
+      !this.options.linksRequireModifierClick || event.metaKey || event.ctrlKey;
+    if (link && !event.shiftKey && clickCount === 1 && linkModifierSatisfied) {
       event.preventDefault();
       event.stopPropagation();
       this.linkActivationPointerId = event.pointerId;
