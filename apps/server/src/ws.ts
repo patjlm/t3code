@@ -58,6 +58,7 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProviderSubagentTranscriptError,
   ProviderUploadFeedbackError,
   ProviderSetupError,
   RelayClientInstallFailedError,
@@ -2701,6 +2702,20 @@ const makeWsRpcLayer = (
               Effect.mapError(
                 (cause) =>
                   new ProviderUploadFeedbackError({
+                    threadId: input.threadId,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerGetSubagentTranscript]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerGetSubagentTranscript,
+            providerService.getSubagentTranscript(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderSubagentTranscriptError({
                     threadId: input.threadId,
                     cause,
                   }),

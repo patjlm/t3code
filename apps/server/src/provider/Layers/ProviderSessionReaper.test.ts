@@ -215,6 +215,7 @@ describe("ProviderSessionReaper", () => {
       },
       rollbackConversation: () => unsupported(),
       uploadFeedback: () => unsupported(),
+      getSubagentTranscript: () => unsupported(),
       streamEvents: Stream.empty,
     };
 

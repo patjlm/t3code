@@ -1,4 +1,4 @@
-import { ORCHESTRATION_WS_METHODS } from "@t3tools/contracts";
+import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
@@ -32,6 +32,19 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",
       tag: ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
+    }),
+    // Provider-scoped (not orchestration-scoped) RPC, but fetched from the
+    // same panel as the rest of this group — see AgentDetailView. Short
+    // staleness + a refresh interval so opening the detail view on a still-
+    // running subagent (transcript not written yet, RPC returns "unavailable")
+    // doesn't get stuck showing the summary fallback after the subagent
+    // finishes — it re-polls while the view stays open instead of caching
+    // "unavailable" indefinitely.
+    subagentTranscript: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:provider:subagent-transcript",
+      tag: WS_METHODS.providerGetSubagentTranscript,
+      staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
     }),
   };
 }

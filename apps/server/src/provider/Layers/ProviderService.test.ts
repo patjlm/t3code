@@ -8,6 +8,7 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderSubagentTranscriptResult,
   ProviderTurnStartResult,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
@@ -264,6 +265,14 @@ function makeFakeCodexAdapter(
       Effect.succeed({ feedbackId: `feedback-${input.threadId}` }),
   );
 
+  const getSubagentTranscript = vi.fn(
+    (
+      _threadId: ThreadId,
+      _agentId: string,
+    ): Effect.Effect<ProviderSubagentTranscriptResult, ProviderAdapterError> =>
+      Effect.succeed({ _tag: "available", messages: [] }),
+  );
+
   const stopAll = vi.fn((): Effect.Effect<void, ProviderAdapterError> =>
     Effect.sync(() => {
       sessions.clear();
@@ -295,6 +304,7 @@ function makeFakeCodexAdapter(
     readThread,
     rollbackThread,
     ...(provider === CODEX_DRIVER ? { uploadFeedback } : {}),
+    ...(provider === CLAUDE_AGENT_DRIVER ? { getSubagentTranscript } : {}),
     stopAll,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -332,6 +342,7 @@ function makeFakeCodexAdapter(
     readThread,
     rollbackThread,
     uploadFeedback,
+    getSubagentTranscript,
     stopAll,
   };
 }
@@ -2227,6 +2238,56 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.instanceOf(error, ProviderValidationError);
       assert.include(error.issue, "does not support feedback uploads");
       assert.strictEqual(routing.claude.startSession.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("recovers a stopped Claude session before reading a subagent transcript", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-subagent-transcript-recover");
+      yield* provider.startSession(threadId, {
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      // The realistic case: the user comes back to browse a subagent from an
+      // idle/completed thread, long after its live session ended.
+      yield* routing.claude.stopSession(threadId);
+      routing.claude.startSession.mockClear();
+      routing.claude.getSubagentTranscript.mockClear();
+
+      const result = yield* provider.getSubagentTranscript({ threadId, agentId: "toolu_task_1" });
+
+      assert.deepStrictEqual(result, { _tag: "available", messages: [] });
+      assert.strictEqual(routing.claude.startSession.mock.calls.length, 1);
+      assert.deepStrictEqual(routing.claude.getSubagentTranscript.mock.calls, [
+        [threadId, "toolu_task_1"],
+      ]);
+      // routing.claude is a module-scoped mock shared across this whole file;
+      // leave its call count as found for tests that assert from a zero baseline.
+      routing.claude.startSession.mockClear();
+    }),
+  );
+
+  it.effect("does not restart a provider with no subagent-transcript support", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-subagent-transcript-unsupported");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("feedback-project"),
+        runtimeMode: "full-access",
+      });
+      yield* routing.codex.stopSession(threadId);
+      routing.codex.startSession.mockClear();
+
+      const result = yield* provider.getSubagentTranscript({ threadId, agentId: "toolu_task_1" });
+
+      assert.deepStrictEqual(result, { _tag: "unavailable" });
+      assert.strictEqual(routing.codex.startSession.mock.calls.length, 0);
     }),
   );
 

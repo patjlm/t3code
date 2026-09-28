@@ -698,6 +698,16 @@ export interface AgentPanelWorkflowGroup {
 export interface AgentPanelModel {
   readonly workflows: ReadonlyArray<AgentPanelWorkflowGroup>;
   readonly directAgents: ReadonlyArray<RuntimeSubagent>;
+  /**
+   * Direct spawns plus every workflow member (phase members + unphased),
+   * flattened into one stable-ordered list. Workflow coordinators themselves
+   * are excluded — they're containers for their members' work, not agents
+   * with their own transcript (same reasoning as the running/idle/settled
+   * tallies below). Used by the agent-detail view's prev/next stepper, which
+   * needs one flat, indexable sequence rather than the nested
+   * workflow/phase/member shape the panel renders.
+   */
+  readonly flatAgents: ReadonlyArray<RuntimeSubagent>;
   readonly runningCount: number;
   readonly waitingCount: number;
   readonly idleCount: number;
@@ -710,6 +720,7 @@ export interface AgentPanelModel {
 const EMPTY_PANEL_MODEL: AgentPanelModel = {
   workflows: [],
   directAgents: [],
+  flatAgents: [],
   runningCount: 0,
   waitingCount: 0,
   idleCount: 0,
@@ -844,13 +855,23 @@ export function deriveAgentPanelModel({
     totalTokens += agent.usage?.totalTokens ?? 0;
   }
 
+  // Updates and the >100-agent retention ranking must never reshuffle rows
+  // that remain visible.
+  const sortedDirect = direct
+    .slice()
+    .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id));
+  const flatAgents = [
+    ...sortedDirect,
+    ...workflowGroups.flatMap((group) => [
+      ...group.phases.flatMap((phase) => phase.members),
+      ...group.unphasedMembers,
+    ]),
+  ];
+
   return {
     workflows: workflowGroups,
-    // Updates and the >100-agent retention ranking must never reshuffle rows
-    // that remain visible.
-    directAgents: direct
-      .slice()
-      .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id)),
+    directAgents: sortedDirect,
+    flatAgents,
     runningCount,
     waitingCount,
     idleCount,

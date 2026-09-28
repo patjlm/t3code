@@ -21,6 +21,8 @@ import type {
   ProviderSession,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ProviderSubagentTranscriptInput,
+  ProviderSubagentTranscriptResult,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
   MessageId,
@@ -127,6 +129,16 @@ export interface ProviderServiceShape {
   readonly uploadFeedback: (
     input: ProviderUploadFeedbackInput,
   ) => Effect.Effect<ProviderUploadFeedbackResult, ProviderServiceError>;
+
+  /**
+   * Read a subagent's full transcript. Resolves to `{ _tag: "unavailable" }`
+   * — never an error — when the routed provider doesn't support this, the
+   * session can't be resolved, or the underlying fetch fails for any reason.
+   * Callers fall back to their own summarized view in every unavailable case.
+   */
+  readonly getSubagentTranscript: (
+    input: ProviderSubagentTranscriptInput,
+  ) => Effect.Effect<ProviderSubagentTranscriptResult, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.
