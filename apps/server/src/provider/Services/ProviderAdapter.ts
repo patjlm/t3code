@@ -16,6 +16,7 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  ProviderSubagentTranscriptResult,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
   ThreadId,
@@ -145,6 +146,15 @@ export interface ProviderAdapterShape<TError> {
   readonly uploadFeedback?: (
     input: ProviderUploadFeedbackInput,
   ) => Effect.Effect<ProviderUploadFeedbackResult, TError>;
+
+  /**
+   * Read a subagent's full transcript when this adapter can resolve one.
+   * Omitted for adapters with no subagent concept or no transcript access.
+   */
+  readonly getSubagentTranscript?: (
+    threadId: ThreadId,
+    agentId: string,
+  ) => Effect.Effect<ProviderSubagentTranscriptResult, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

@@ -20,14 +20,27 @@ import {
   formatSubagentModelLabel,
   formatSubagentTokenCount,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import type {
+  EnvironmentId,
+  ProviderSubagentTranscriptBlock,
+  ProviderSubagentTranscriptMessage,
+  ThreadId,
+} from "@t3tools/contracts";
+import { Bot, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
+import ChatMarkdown from "~/components/ChatMarkdown";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 
 /**
  * In-flight states all present as Working (one steady state, per the
@@ -136,8 +149,14 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
   );
 }
 
-/** Flat, non-interactive agent status line. No unfold. */
-function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+/** Fixed-height agent status line. Selecting it opens the agent detail view. */
+function AgentRow({
+  agent,
+  onSelect,
+}: {
+  agent: RuntimeSubagent;
+  onSelect: (agentId: string) => void;
+}) {
   const visuals = STATUS_VISUALS[agent.status];
   const statusLabel =
     agent.kind === "subagent_batch" && agent.status === "idle" ? "Idle" : visuals.label;
@@ -155,7 +174,11 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   ].filter((value): value is string => value !== null);
 
   return (
-    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
+    <button
+      type="button"
+      onClick={() => onSelect(agent.id)}
+      className="grid h-[3.875rem] w-full grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1 text-left hover:bg-accent/40"
+    >
       <span className="col-start-1 row-start-1 flex items-center">
         <StatusDot status={agent.status} />
       </span>
@@ -187,7 +210,7 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
         {metadata.join(" · ")}
       </span>
       <span className="sr-only">{statusLabel}</span>
-    </div>
+    </button>
   );
 }
 
@@ -317,9 +340,11 @@ function WorkflowScriptView({
  */
 function PhaseSection({
   phase,
+  onSelectAgent,
   defaultOpen = false,
 }: {
   phase: AgentPanelWorkflowGroup["phases"][number];
+  onSelectAgent: (agentId: string) => void;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
@@ -369,7 +394,11 @@ function PhaseSection({
           </span>
         ) : null}
       </button>
-      {open ? phase.members.map((member) => <AgentRow key={member.id} agent={member} />) : null}
+      {open
+        ? phase.members.map((member) => (
+            <AgentRow key={member.id} agent={member} onSelect={onSelectAgent} />
+          ))
+        : null}
     </div>
   );
 }
@@ -379,11 +408,13 @@ function ExpandedWorkflowSection({
   group,
   environmentId,
   threadId,
+  onSelectAgent,
   onCollapse,
 }: {
   group: AgentPanelWorkflowGroup;
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
+  onSelectAgent: (agentId: string) => void;
   onCollapse: () => void;
 }) {
   const [scriptOpen, setScriptOpen] = useState(false);
@@ -439,13 +470,18 @@ function ExpandedWorkflowSection({
         />
       ) : null}
       {group.phases.map((phase) => (
-        <PhaseSection key={phase.index} phase={phase} defaultOpen={!workflowIsLive(group)} />
+        <PhaseSection
+          key={phase.index}
+          phase={phase}
+          onSelectAgent={onSelectAgent}
+          defaultOpen={!workflowIsLive(group)}
+        />
       ))}
       {group.unphasedMembers.map((member) => (
-        <AgentRow key={member.id} agent={member} />
+        <AgentRow key={member.id} agent={member} onSelect={onSelectAgent} />
       ))}
       {group.phases.length === 0 && group.unphasedMembers.length === 0 ? (
-        <AgentRow agent={group.workflow} />
+        <AgentRow agent={group.workflow} onSelect={onSelectAgent} />
       ) : null}
     </section>
   );
@@ -503,10 +539,12 @@ function WorkflowSection({
   group,
   environmentId,
   threadId,
+  onSelectAgent,
 }: {
   group: AgentPanelWorkflowGroup;
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
+  onSelectAgent: (agentId: string) => void;
 }) {
   const [open, setOpen] = useState(() => workflowIsLive(group));
   return open ? (
@@ -514,6 +552,7 @@ function WorkflowSection({
       group={group}
       environmentId={environmentId}
       threadId={threadId}
+      onSelectAgent={onSelectAgent}
       onCollapse={() => setOpen(false)}
     />
   ) : (
@@ -521,14 +560,444 @@ function WorkflowSection({
   );
 }
 
+/** One-line, single-space-collapsed preview of arbitrary tool input/output. */
+function truncateOneLine(text: string, maxLength: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > maxLength ? `${flat.slice(0, maxLength - 1)}…` : flat;
+}
+
+/**
+ * Collapsed by default: standard tool metadata (name + a one-line preview) on
+ * the header row, full detail only once expanded — matches the main
+ * timeline's tool-call rows instead of dumping raw JSON/output inline.
+ */
+function CollapsibleTranscriptBlock({
+  summary,
+  isError = false,
+  children,
+}: {
+  summary: string;
+  isError?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className={cn(
+          "flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left font-mono text-2xs transition-colors hover:bg-accent/20",
+          isError ? "text-destructive" : "text-foreground/90",
+        )}
+      >
+        {open ? (
+          <ChevronDown aria-hidden className="size-3 shrink-0" />
+        ) : (
+          <ChevronRight aria-hidden className="size-3 shrink-0" />
+        )}
+        <span className="min-w-0 flex-1 truncate">{summary}</span>
+      </button>
+      {open ? <div className="mt-1 rounded-md bg-muted/40 px-3 py-2">{children}</div> : null}
+    </div>
+  );
+}
+
+type ToolUseBlock = Extract<ProviderSubagentTranscriptBlock, { type: "tool_use" }>;
+type ToolResultBlock = Extract<ProviderSubagentTranscriptBlock, { type: "tool_result" }>;
+
+/** A non-tool block, tagged with which message it came from (for the role label). */
+interface TranscriptTextItem {
+  readonly kind: "text" | "thinking";
+  readonly role: "user" | "assistant";
+  readonly text: string;
+}
+
+/** One tool call: its invocation and (once arrived) its result, shown as one collapsible. */
+interface TranscriptToolItem {
+  readonly kind: "tool";
+  readonly toolUse: ToolUseBlock | null;
+  readonly toolResult: ToolResultBlock | null;
+}
+
+type TranscriptRenderItem = TranscriptTextItem | TranscriptToolItem;
+
+/**
+ * Anthropic-style transcripts put a tool_use in one (assistant) message and
+ * its tool_result in the next (user) message. Pairing them by id here, across
+ * message boundaries, is what lets the UI show one collapsible per tool call
+ * instead of two — matching how the main timeline renders tool calls.
+ */
+/** The SDK's final-report tool — a plain message to the caller, not a real tool call. */
+const HANDBACK_TOOL_NAME = "SubagentHandback";
+
+function handbackMessageText(input: unknown): string {
+  if (input && typeof input === "object" && "message" in input) {
+    const message = (input as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return JSON.stringify(input);
+}
+
+function buildTranscriptRenderItems(
+  messages: ReadonlyArray<ProviderSubagentTranscriptMessage>,
+): ReadonlyArray<TranscriptRenderItem> {
+  const items: TranscriptRenderItem[] = [];
+  const pendingToolUseIndex = new Map<string, number>();
+  const handbackToolUseIds = new Set<string>();
+  for (const message of messages) {
+    for (const block of message.blocks) {
+      switch (block.type) {
+        case "text":
+          items.push({ kind: "text", role: message.role, text: block.text });
+          break;
+        case "thinking":
+          items.push({ kind: "thinking", role: message.role, text: block.thinking });
+          break;
+        case "tool_use":
+          if (block.name === HANDBACK_TOOL_NAME) {
+            handbackToolUseIds.add(block.id);
+            items.push({ kind: "text", role: "assistant", text: handbackMessageText(block.input) });
+            break;
+          }
+          pendingToolUseIndex.set(block.id, items.length);
+          items.push({ kind: "tool", toolUse: block, toolResult: null });
+          break;
+        case "tool_result": {
+          if (handbackToolUseIds.delete(block.toolUseId)) break;
+          const pendingIndex = pendingToolUseIndex.get(block.toolUseId);
+          const pending = pendingIndex !== undefined ? items[pendingIndex] : undefined;
+          if (pending?.kind === "tool") {
+            items[pendingIndex!] = { ...pending, toolResult: block };
+            pendingToolUseIndex.delete(block.toolUseId);
+          } else {
+            // No matching call in view (e.g. transcript fetched mid-run) — still show it.
+            items.push({ kind: "tool", toolUse: null, toolResult: block });
+          }
+          break;
+        }
+      }
+    }
+  }
+  return items;
+}
+
+function TranscriptTextItemView({ item }: { item: TranscriptTextItem }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="text-3xs font-medium uppercase tracking-wider text-muted-foreground">
+        {item.role === "assistant" ? "Assistant" : "User"}
+      </div>
+      {item.kind === "thinking" ? (
+        <div className="rounded-md border border-border/40 bg-muted/20 p-2 text-xs italic text-muted-foreground">
+          {item.text}
+        </div>
+      ) : (
+        <ChatMarkdown text={item.text} cwd={undefined} />
+      )}
+    </div>
+  );
+}
+
+/** One collapsible per tool call: name + input preview on the header, input and result once expanded. */
+function TranscriptToolItemView({ item }: { item: TranscriptToolItem }) {
+  const { toolUse, toolResult } = item;
+  const name = toolUse?.name ?? "tool";
+  const inputPreview = toolUse ? truncateOneLine(JSON.stringify(toolUse.input), 60) : null;
+  const summary = `▸ ${name}${inputPreview ? `: ${inputPreview}` : ""}`;
+  const isError = toolResult?.isError ?? false;
+  return (
+    <CollapsibleTranscriptBlock summary={summary} isError={isError}>
+      <div className="flex flex-col gap-2">
+        {toolUse ? (
+          <div>
+            <div className="mb-1 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
+              Input
+            </div>
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-3xs text-muted-foreground">
+              {JSON.stringify(toolUse.input, null, 2)}
+            </pre>
+          </div>
+        ) : null}
+        {toolResult ? (
+          <div>
+            <div className="mb-1 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
+              Result
+            </div>
+            <pre
+              className={cn(
+                "max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-3xs",
+                isError ? "text-destructive" : "text-muted-foreground",
+              )}
+            >
+              {toolResult.content}
+            </pre>
+          </div>
+        ) : (
+          <p className="text-3xs italic text-muted-foreground">No result yet.</p>
+        )}
+      </div>
+    </CollapsibleTranscriptBlock>
+  );
+}
+
+/**
+ * Fallback view: the same compact summary fields AgentRow already shows,
+ * just given room to breathe. Used whenever a full transcript isn't
+ * available — provider unsupported, fetch failed, subagent still running
+ * with no file written yet, whatever. Never a dead end.
+ */
+function AgentSummaryFallback({ agent }: { agent: RuntimeSubagent }) {
+  const activity = agentActivityText(agent);
+  return (
+    <div className="flex flex-col gap-2 p-1">
+      <p className="text-xs text-muted-foreground">
+        Full transcript isn't available for this agent. Showing the summary instead.
+      </p>
+      {activity ? <p className="whitespace-pre-wrap text-sm">{activity}</p> : null}
+      {agent.recentActivity.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          {agent.recentActivity.map((entry) => (
+            <p
+              key={entry.at}
+              className="whitespace-pre-wrap font-mono text-2xs text-muted-foreground"
+            >
+              {entry.summary}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Fetches and renders one agent's full transcript, on demand — never preloaded. */
+function AgentTranscriptBody({
+  agent,
+  environmentId,
+  threadId,
+}: {
+  agent: RuntimeSubagent;
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+}) {
+  const result = useAtomValue(
+    orchestrationEnvironment.subagentTranscript({
+      environmentId,
+      input: { threadId, agentId: agent.id },
+    }),
+  );
+
+  if (result._tag === "Success") {
+    if (result.value._tag === "available" && result.value.messages.length > 0) {
+      const items = buildTranscriptRenderItems(result.value.messages);
+      const lastItem = items[items.length - 1];
+      const historyItems = items.slice(0, -1);
+      return (
+        <div className="flex flex-col gap-2">
+          {historyItems.length > 0 ? (
+            <CollapsibleTranscriptBlock
+              summary={`Full transcript (${historyItems.length} ${historyItems.length === 1 ? "message" : "messages"})`}
+            >
+              <div className="flex flex-col gap-2">
+                {historyItems.map((item, index) => (
+                  // oxlint-disable-next-line react/no-array-index-key -- immutable fetched-once sequence, no server-issued id
+                  <div key={index}>
+                    {item.kind === "tool" ? (
+                      <TranscriptToolItemView item={item} />
+                    ) : (
+                      <TranscriptTextItemView item={item} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapsibleTranscriptBlock>
+          ) : null}
+          {lastItem ? (
+            lastItem.kind === "tool" ? (
+              <TranscriptToolItemView item={lastItem} />
+            ) : (
+              <TranscriptTextItemView item={lastItem} />
+            )
+          ) : null}
+        </div>
+      );
+    }
+    return <AgentSummaryFallback agent={agent} />;
+  }
+  if (result._tag === "Failure") {
+    return <AgentSummaryFallback agent={agent} />;
+  }
+  return <p className="p-2 text-xs text-muted-foreground">Loading transcript…</p>;
+}
+
+/**
+ * Dedicated agent detail view: a dropdown + prev/next stepper over one flat
+ * agent sequence, showing only the selected agent's full transcript (falling
+ * back to the existing summary when unavailable) with a stats footer. Chosen
+ * over per-row inline expansion because it doesn't require threading
+ * activities/pagination state through the whole panel component tree.
+ */
+function AgentDetailView({
+  agent,
+  stepAgents,
+  environmentId,
+  threadId,
+  onSelectAgent,
+}: {
+  agent: RuntimeSubagent;
+  stepAgents: ReadonlyArray<RuntimeSubagent>;
+  environmentId: EnvironmentId | null;
+  threadId: ThreadId | null;
+  onSelectAgent: (agentId: string) => void;
+}) {
+  const currentIndex = stepAgents.findIndex((candidate) => candidate.id === agent.id);
+  const canStep = currentIndex >= 0 && stepAgents.length > 1;
+  const stepTo = (direction: -1 | 1) => {
+    if (!canStep) return;
+    const nextIndex = (currentIndex + direction + stepAgents.length) % stepAgents.length;
+    onSelectAgent(stepAgents[nextIndex]!.id);
+  };
+
+  const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
+  const duration =
+    agent.startedAt && (agent.completedAt || agent.status !== "running")
+      ? elapsedBetween(agent.startedAt, agent.completedAt)
+      : null;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center gap-1 border-b border-border/60 px-1.5 py-1.5">
+        <Select value={agent.id} onValueChange={(value) => value && onSelectAgent(value)}>
+          <SelectTrigger size="xs" className="min-w-0 flex-1" aria-label="Select agent">
+            <SelectValue>
+              <span className="flex items-center gap-1.5 truncate">
+                <StatusDot status={agent.status} />
+                <span className="truncate">{agent.title}</span>
+              </span>
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="start" alignItemWithTrigger={false}>
+            {stepAgents.map((candidate) => (
+              <SelectItem key={candidate.id} value={candidate.id}>
+                <span className="flex items-center gap-1.5">
+                  <StatusDot status={candidate.status} />
+                  <span className="truncate">{candidate.title}</span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+        {canStep ? (
+          <span className="flex shrink-0 items-center gap-0.5">
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
+              onClick={() => stepTo(-1)}
+              aria-label="Previous agent"
+            >
+              <ChevronLeft aria-hidden className="size-3.5" />
+            </Button>
+            <span className="min-w-10 text-center font-mono text-3xs tabular-nums text-muted-foreground">
+              {currentIndex + 1}/{stepAgents.length}
+            </span>
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
+              onClick={() => stepTo(1)}
+              aria-label="Next agent"
+            >
+              <ChevronRight aria-hidden className="size-3.5" />
+            </Button>
+          </span>
+        ) : null}
+      </div>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex flex-col gap-2 p-2">
+          {environmentId && threadId ? (
+            <AgentTranscriptBody agent={agent} environmentId={environmentId} threadId={threadId} />
+          ) : (
+            <AgentSummaryFallback agent={agent} />
+          )}
+        </div>
+      </ScrollArea>
+      <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 px-3 py-1.5 font-mono text-2xs text-muted-foreground">
+        {duration ? <span>{duration}</span> : null}
+        {modelLabel ? <span>{modelLabel}</span> : null}
+        <span className="tabular-nums">
+          Σ {formatSubagentTokenCount(agent.usage?.totalTokens ?? 0)} tok
+        </span>
+        {agent.usage?.toolUses !== undefined ? <span>{agent.usage.toolUses} tools</span> : null}
+        {agent.activationCount > 1 ? <span>run {agent.activationCount}</span> : null}
+      </footer>
+    </div>
+  );
+}
+
+/**
+ * Owns the detail view's "which agent is currently shown" state, seeded from
+ * the surface's target and reset (via the parent's `key`) whenever that
+ * target changes externally — e.g. clicking a different row in the Agents
+ * list. Internal prev/next/dropdown navigation never touches the surface
+ * store, so browsing around doesn't leave a trail of history entries.
+ */
+function AgentDetailPanel({
+  model,
+  environmentId,
+  threadId,
+  initialAgentId,
+}: {
+  model: AgentPanelModel;
+  environmentId: EnvironmentId | null;
+  threadId: ThreadId | null;
+  initialAgentId: string | null;
+}) {
+  // Bare coordinators (a workflow with zero members) render one AgentRow of
+  // their own (see ExpandedWorkflowSection) but are excluded from
+  // model.flatAgents — that array is stepper order, this is lookup-by-id.
+  const selectableAgents = [...model.flatAgents, ...model.workflows.map((group) => group.workflow)];
+  const stepAgentsBase = model.flatAgents.length > 0 ? model.flatAgents : selectableAgents;
+  const initialAgent =
+    (initialAgentId && selectableAgents.find((agent) => agent.id === initialAgentId)) ||
+    selectableAgents[0] ||
+    null;
+  const [currentAgentId, setCurrentAgentId] = useState(initialAgent?.id ?? null);
+  const agent =
+    selectableAgents.find((candidate) => candidate.id === currentAgentId) ?? initialAgent;
+  if (!agent) return null;
+  // A bare workflow coordinator (zero members) is selectable but excluded
+  // from stepAgentsBase — without this, the dropdown wouldn't list the very
+  // agent it's currently showing.
+  const stepAgents = stepAgentsBase.some((candidate) => candidate.id === agent.id)
+    ? stepAgentsBase
+    : [agent, ...stepAgentsBase];
+
+  return (
+    <AgentDetailView
+      agent={agent}
+      stepAgents={stepAgents}
+      environmentId={environmentId}
+      threadId={threadId}
+      onSelectAgent={setCurrentAgentId}
+    />
+  );
+}
+
 export function AgentsPanel({
   model,
   environmentId = null,
   threadId = null,
+  onSelectAgent,
+  detailAgentId,
 }: {
   model: AgentPanelModel;
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
+  /** List mode: called when a row is picked. Omit in detail mode. */
+  onSelectAgent?: (agentId: string) => void;
+  /** Presence (not value) switches to detail mode; null falls back to the first agent. */
+  detailAgentId?: string | null;
 }) {
   if (!model.hasAgents) {
     return (
@@ -543,6 +1012,20 @@ export function AgentsPanel({
     );
   }
 
+  if (detailAgentId !== undefined) {
+    return (
+      <AgentDetailPanel
+        key={detailAgentId ?? "auto"}
+        model={model}
+        environmentId={environmentId}
+        threadId={threadId}
+        initialAgentId={detailAgentId}
+      />
+    );
+  }
+
+  const selectAgent = onSelectAgent ?? (() => {});
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
@@ -553,6 +1036,7 @@ export function AgentsPanel({
               group={group}
               environmentId={environmentId}
               threadId={threadId}
+              onSelectAgent={selectAgent}
             />
           ))}
           {model.directAgents.length > 0 ? (
@@ -561,7 +1045,7 @@ export function AgentsPanel({
                 Direct spawns
               </div>
               {model.directAgents.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
+                <AgentRow key={agent.id} agent={agent} onSelect={selectAgent} />
               ))}
             </section>
           ) : null}

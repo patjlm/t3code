@@ -104,6 +104,14 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
     }),
   );
 
+  public readonly readAgentThreadImpl = vi.fn(
+    (agentThreadId: string): Promise<CodexThreadSnapshot> =>
+      Promise.resolve({
+        threadId: agentThreadId,
+        turns: [],
+      }),
+  );
+
   public readonly uploadFeedbackImpl = vi.fn((_reason?: string) =>
     Promise.resolve({ threadId: "provider-thread-1" }),
   );
@@ -141,6 +149,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   readThread = Effect.promise(() => this.readThreadImpl());
+
+  readAgentThread(agentThreadId: string) {
+    return Effect.promise(() => this.readAgentThreadImpl(agentThreadId));
+  }
 
   rollbackThread(numTurns: number) {
     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
@@ -413,6 +425,120 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       NodeAssert.equal(result._tag, "Failure");
       NodeAssert.equal(result.failure._tag, "ProviderAdapterSessionNotFoundError");
     }),
+  );
+
+  it.effect("reads a collab-agent child thread by its own thread id, no mapping needed", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-subagent-parent");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.readAgentThreadImpl.mockResolvedValueOnce({
+        threadId: "child-thread-1",
+        turns: [
+          {
+            id: asTurnId("turn-1"),
+            items: [
+              { id: "item-1", type: "userMessage", content: [{ type: "text", text: "explore" }] },
+              { id: "item-2", type: "agentMessage", text: "done exploring" },
+            ],
+          },
+        ],
+      });
+
+      const result = yield* adapter.getSubagentTranscript!(threadId, "child-thread-1");
+
+      NodeAssert.deepStrictEqual(runtime.readAgentThreadImpl.mock.calls, [["child-thread-1"]]);
+      NodeAssert.deepStrictEqual(result, {
+        _tag: "available",
+        messages: [
+          { role: "user", blocks: [{ type: "text", text: "explore" }] },
+          { role: "assistant", blocks: [{ type: "text", text: "done exploring" }] },
+        ],
+      });
+    }),
+  );
+
+  it.effect("drops subAgentActivity items instead of rendering them as raw JSON", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-subagent-parent-activity");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.readAgentThreadImpl.mockResolvedValueOnce({
+        threadId: "child-thread-1",
+        turns: [
+          {
+            id: asTurnId("turn-1"),
+            items: [
+              {
+                id: "item-0",
+                type: "subAgentActivity",
+                kind: "interacted",
+                agentPath: "/root",
+                agentThreadId: "child-thread-1",
+              },
+              { id: "item-1", type: "userMessage", content: [{ type: "text", text: "explore" }] },
+              { id: "item-2", type: "agentMessage", text: "done exploring" },
+            ],
+          },
+        ],
+      });
+
+      const result = yield* adapter.getSubagentTranscript!(threadId, "child-thread-1");
+
+      NodeAssert.deepStrictEqual(result, {
+        _tag: "available",
+        messages: [
+          { role: "user", blocks: [{ type: "text", text: "explore" }] },
+          { role: "assistant", blocks: [{ type: "text", text: "done exploring" }] },
+        ],
+      });
+    }),
+  );
+
+  it.effect("returns unavailable for an unknown parent thread", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const result = yield* adapter.getSubagentTranscript!(
+        asThreadId("thread-subagent-parent-missing"),
+        "child-thread-1",
+      );
+      NodeAssert.deepStrictEqual(result, { _tag: "unavailable" });
+    }),
+  );
+
+  it.effect(
+    "returns unavailable rather than an empty transcript when the child thread has no turns",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        const threadId = asThreadId("thread-subagent-parent-empty");
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const runtime = sessionRuntimeFactory.lastRuntime;
+        NodeAssert.ok(runtime);
+        runtime.readAgentThreadImpl.mockResolvedValueOnce({
+          threadId: "child-thread-1",
+          turns: [],
+        });
+
+        const result = yield* adapter.getSubagentTranscript!(threadId, "child-thread-1");
+        NodeAssert.deepStrictEqual(result, { _tag: "unavailable" });
+      }),
   );
 
   it.effect("maps codex model options before sending a turn", () =>

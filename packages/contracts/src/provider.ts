@@ -128,6 +128,79 @@ export const ProviderUploadFeedbackResult = Schema.Struct({
 });
 export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.Type;
 
+export const ProviderSubagentTranscriptInput = Schema.Struct({
+  threadId: ThreadId,
+  /** T3's own subagent id (RuntimeSubagent.id). For a plain Task-tool spawn this is
+      already the provider's own agent id; some providers/paths (e.g. Claude's
+      local_workflow members) use a different, non-agent id that the adapter
+      resolves via its own fallback correlation. */
+  agentId: TrimmedNonEmptyString,
+});
+export type ProviderSubagentTranscriptInput = typeof ProviderSubagentTranscriptInput.Type;
+
+const ProviderSubagentTranscriptTextBlock = Schema.Struct({
+  type: Schema.Literal("text"),
+  text: Schema.String,
+});
+const ProviderSubagentTranscriptThinkingBlock = Schema.Struct({
+  type: Schema.Literal("thinking"),
+  thinking: Schema.String,
+});
+const ProviderSubagentTranscriptToolUseBlock = Schema.Struct({
+  type: Schema.Literal("tool_use"),
+  id: Schema.String,
+  name: Schema.String,
+  // Optional: a JSON.stringify of `{input: undefined}` drops the key entirely,
+  // and a required field would then fail to decode the whole message/result.
+  input: Schema.optional(Schema.Unknown),
+});
+const ProviderSubagentTranscriptToolResultBlock = Schema.Struct({
+  type: Schema.Literal("tool_result"),
+  toolUseId: Schema.String,
+  content: Schema.String,
+  isError: Schema.optional(Schema.Boolean),
+});
+
+export const ProviderSubagentTranscriptBlock = Schema.Union([
+  ProviderSubagentTranscriptTextBlock,
+  ProviderSubagentTranscriptThinkingBlock,
+  ProviderSubagentTranscriptToolUseBlock,
+  ProviderSubagentTranscriptToolResultBlock,
+]);
+export type ProviderSubagentTranscriptBlock = typeof ProviderSubagentTranscriptBlock.Type;
+
+export const ProviderSubagentTranscriptMessage = Schema.Struct({
+  role: Schema.Literals(["user", "assistant"]),
+  blocks: Schema.Array(ProviderSubagentTranscriptBlock),
+});
+export type ProviderSubagentTranscriptMessage = typeof ProviderSubagentTranscriptMessage.Type;
+
+/**
+ * Single available-vs-not signal. Callers never need to know why a
+ * transcript is unavailable (provider unsupported, fetch failed, subagent
+ * still running with no file written yet, etc.) — they fall back to the
+ * existing in-memory summary view either way.
+ */
+export const ProviderSubagentTranscriptResult = Schema.Union([
+  Schema.TaggedStruct("available", {
+    messages: Schema.Array(ProviderSubagentTranscriptMessage),
+  }),
+  Schema.TaggedStruct("unavailable", {}),
+]);
+export type ProviderSubagentTranscriptResult = typeof ProviderSubagentTranscriptResult.Type;
+
+export class ProviderSubagentTranscriptError extends Schema.TaggedError<ProviderSubagentTranscriptError>()(
+  "ProviderSubagentTranscriptError",
+  {
+    threadId: ThreadId,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Failed to load subagent transcript for thread ${this.threadId}.`;
+  }
+}
+
 export class ProviderUploadFeedbackError extends Schema.TaggedError<ProviderUploadFeedbackError>()(
   "ProviderUploadFeedbackError",
   {

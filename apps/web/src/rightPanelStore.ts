@@ -39,6 +39,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "agents",
+  "agent-detail",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -96,7 +97,11 @@ export type RightPanelSurface =
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  /** Same panel as "agents", opened straight into one agent's detail view.
+      `agentId` is null when opened from the palette with no specific target
+      (falls back to the first agent); set when opened from a row click. */
+  | { id: "agent-detail"; kind: "agent-detail"; agentId: string | null };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -148,6 +153,8 @@ interface RightPanelStoreState {
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  /** Opens (or retargets, if already open) the singleton agent-detail surface at this agent. */
+  openAgentDetail: (ref: ScopedThreadRef, agentId: string) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -210,6 +217,8 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "agents":
       return { id: "agents", kind };
+    case "agent-detail":
+      return { id: "agent-detail", kind, agentId: null };
     case "device":
       return { id: "device", kind };
   }
@@ -636,6 +645,24 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                     entry.id === surface.id ? surface : entry,
                   )
                 : [...withoutStandaloneExplorer, surface],
+            };
+          }),
+        ),
+      openAgentDetail: (ref, agentId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface: RightPanelSurface = {
+              id: "agent-detail",
+              kind: "agent-detail",
+              agentId,
+            };
+            const exists = current.surfaces.some((entry) => entry.id === "agent-detail");
+            return {
+              isOpen: true,
+              activeSurfaceId: "agent-detail",
+              surfaces: exists
+                ? current.surfaces.map((entry) => (entry.id === "agent-detail" ? surface : entry))
+                : [...current.surfaces, surface],
             };
           }),
         ),

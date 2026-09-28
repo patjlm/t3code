@@ -25,6 +25,8 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ProviderSubagentTranscriptInput,
+  ProviderSubagentTranscriptResult,
   ProviderUploadFeedbackInput,
   ThreadId,
   TurnId,
@@ -2339,6 +2341,48 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const getSubagentTranscript: ProviderServiceMethod<"getSubagentTranscript"> = Effect.fn(
+    "getSubagentTranscript",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.getSubagentTranscript",
+      schema: ProviderSubagentTranscriptInput,
+      payload: rawInput,
+    });
+    const unavailable = { _tag: "unavailable" } as const satisfies ProviderSubagentTranscriptResult;
+    // Fail fast, without recovering a session, for providers that fundamentally
+    // don't support this — no point spinning up a CLI process for a doomed call.
+    let routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.getSubagentTranscript",
+      allowRecovery: false,
+    }).pipe(Effect.orElseSucceed(() => undefined));
+    if (!routed || routed.adapter.getSubagentTranscript === undefined) {
+      return unavailable;
+    }
+    // The common case is browsing a subagent from an idle/completed thread —
+    // no live session yet. Recover one (same as uploadFeedback/rollbackConversation)
+    // instead of failing just because nothing happens to be running right now.
+    if (!routed.isActive) {
+      routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.getSubagentTranscript",
+        allowRecovery: true,
+      }).pipe(Effect.orElseSucceed(() => undefined));
+    }
+    if (!routed || routed.adapter.getSubagentTranscript === undefined) {
+      return unavailable;
+    }
+    yield* Effect.annotateCurrentSpan({
+      "provider.operation": "get-subagent-transcript",
+      "provider.kind": routed.adapter.provider,
+      "provider.thread_id": input.threadId,
+    });
+    return yield* routed.adapter
+      .getSubagentTranscript(routed.threadId, input.agentId)
+      .pipe(Effect.orElseSucceed(() => unavailable));
+  });
+
   const runStopAll = Effect.fn("runStopAll")(function* () {
     // Continuation is project-scopable, so decide it per session's project;
     // without orchestration the environment value is all there is.
@@ -2463,6 +2507,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     assertConversationRollbackSupported,
     rollbackConversation,
     uploadFeedback,
+    getSubagentTranscript,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

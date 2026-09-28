@@ -22,6 +22,9 @@ import {
   type ToolActivityNativeAppReference,
   type ToolActivitySource,
   type ProviderUserInputAnswers,
+  type ProviderSubagentTranscriptBlock,
+  type ProviderSubagentTranscriptMessage,
+  type ProviderSubagentTranscriptResult,
   type ServerProviderModel,
   RuntimeItemId,
   RuntimeRequestId,
@@ -68,6 +71,7 @@ import {
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeShape,
+  type CodexThreadItem,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
@@ -171,6 +175,131 @@ function mapCodexRuntimeError(
     detail: error.message,
     cause: error,
   });
+}
+
+// Same rationale as ClaudeAdapter.ts's identical constant: a subagent
+// transcript shows full detail by design, but an uncapped tool result (large
+// command output, an mcp tool's raw payload, an unrecognized item's full JSON
+// dump) can still blow up the RPC payload over the websocket.
+const TRANSCRIPT_CONTENT_MAX_CHARS = 20_000;
+
+function capTranscriptContent(text: string): string {
+  return text.length > TRANSCRIPT_CONTENT_MAX_CHARS
+    ? `${text.slice(0, TRANSCRIPT_CONTENT_MAX_CHARS)}\n… (truncated)`
+    : text;
+}
+
+function mapCodexThreadItemToTranscriptBlocks(item: CodexThreadItem): ReadonlyArray<{
+  readonly role: "user" | "assistant";
+  readonly block: ProviderSubagentTranscriptBlock;
+}> {
+  switch (item.type) {
+    case "userMessage":
+      return [
+        {
+          role: "user",
+          block: {
+            type: "text",
+            text: item.content
+              .map((part) => ("text" in part && typeof part.text === "string" ? part.text : ""))
+              .filter((text) => text.length > 0)
+              .join("\n"),
+          },
+        },
+      ];
+    case "agentMessage":
+      return [{ role: "assistant", block: { type: "text", text: item.text } }];
+    case "reasoning": {
+      const thinking = [...(item.summary ?? []), ...(item.content ?? [])].join("\n");
+      return thinking.length > 0
+        ? [{ role: "assistant", block: { type: "thinking", thinking } }]
+        : [];
+    }
+    case "commandExecution":
+      return [
+        {
+          role: "assistant",
+          block: { type: "tool_use", id: item.id, name: "shell", input: { command: item.command } },
+        },
+        {
+          role: "user",
+          block: {
+            type: "tool_result",
+            toolUseId: item.id,
+            content: capTranscriptContent(item.aggregatedOutput ?? ""),
+            ...(item.status === "failed" ? { isError: true } : {}),
+          },
+        },
+      ];
+    case "mcpToolCall":
+      return [
+        {
+          role: "assistant",
+          block: {
+            type: "tool_use",
+            id: item.id,
+            name: `${item.server}.${item.tool}`,
+            input: item.arguments,
+          },
+        },
+        {
+          role: "user",
+          block: {
+            type: "tool_result",
+            toolUseId: item.id,
+            content: capTranscriptContent(JSON.stringify(item.result ?? item.error ?? "")),
+            ...(item.error ? { isError: true } : {}),
+          },
+        },
+      ];
+    case "fileChange":
+      return [
+        {
+          role: "assistant",
+          block: {
+            type: "tool_use",
+            id: item.id,
+            name: "fileChange",
+            input: { changes: item.changes },
+          },
+        },
+      ];
+    case "plan":
+      return [{ role: "assistant", block: { type: "text", text: item.text } }];
+    case "subAgentActivity":
+      // Lifecycle pointer only (started/interacted/interrupted/completed +
+      // agentThreadId/agentPath) — the same bookkeeping the parent-side
+      // registration logic already discards (see the "/root" self-activity
+      // guard in CodexSessionRuntime.ts). Never carries message content, so
+      // it has nothing worth showing in a transcript.
+      return [];
+    default:
+      // Less common item kinds (web search, image tools, review-mode markers,
+      // dynamic tool calls, ...) render as a compact JSON block rather than
+      // being silently dropped.
+      return [
+        {
+          role: "assistant",
+          block: {
+            type: "text",
+            text: capTranscriptContent(`[${item.type}] ${JSON.stringify(item)}`),
+          },
+        },
+      ];
+  }
+}
+
+function mapCodexThreadSnapshotToTranscriptMessages(
+  turns: ReadonlyArray<{ readonly items: ReadonlyArray<CodexThreadItem> }>,
+): ReadonlyArray<ProviderSubagentTranscriptMessage> {
+  return turns.flatMap((turn) =>
+    turn.items.flatMap((item) =>
+      mapCodexThreadItemToTranscriptBlocks(item).map(({ role, block }) => ({
+        role,
+        blocks: [block],
+      })),
+    ),
+  );
 }
 
 type CodexLifecycleItem =
@@ -2676,6 +2805,24 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })),
     );
 
+  const getSubagentTranscript: CodexAdapterShape["getSubagentTranscript"] = (threadId, agentId) => {
+    const unavailable = {
+      _tag: "unavailable",
+    } as const satisfies ProviderSubagentTranscriptResult;
+    // T3's tracked subagent id for Codex already IS the collab-agent's own
+    // Codex thread id (see mapCollabAgentEvent's RuntimeTaskId.make(agentThreadId)),
+    // and collab child threads share the parent session's app-server
+    // connection — no id-mapping step needed, unlike Claude's tool_use_id.
+    return requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.readAgentThread(agentId)),
+      Effect.map((snapshot): ProviderSubagentTranscriptResult => {
+        const messages = mapCodexThreadSnapshotToTranscriptMessages(snapshot.turns);
+        return messages.length === 0 ? unavailable : { _tag: "available", messages };
+      }),
+      Effect.orElseSucceed(() => unavailable),
+    );
+  };
+
   const rollbackThread: CodexAdapterShape["rollbackThread"] = (threadId, numTurns) => {
     if (!Number.isInteger(numTurns) || numTurns < 1) {
       return Effect.fail(
@@ -2811,6 +2958,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
+    getSubagentTranscript,
     uploadFeedback,
     respondToRequest,
     respondToUserInput,

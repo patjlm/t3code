@@ -13,6 +13,8 @@ import {
   type CanUseTool,
   query,
   getSessionMessages,
+  getSubagentMessages,
+  listSubagents,
   forkSession,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -44,6 +46,9 @@ import {
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
   type ProviderSession,
+  type ProviderSubagentTranscriptBlock,
+  type ProviderSubagentTranscriptMessage,
+  type ProviderSubagentTranscriptResult,
   type ThreadTokenUsageSnapshot,
   type TurnTokenUsage,
   type ProviderUserInputAnswers,
@@ -135,6 +140,7 @@ const decodeSessionMessages = Schema.decodeSync(
     ),
   ),
 );
+const decodeSubagentIds = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 type ClaudeHistoryMessage = {
   readonly type: string;
@@ -163,6 +169,94 @@ const isClaudeHumanTurnStart = (message: ClaudeHistoryMessage): boolean => {
       ))
   );
 };
+
+// A subagent transcript is meant to show full detail, unlike the capped
+// one-line summary elsewhere — but an uncapped tool result (a large file
+// read, a chatty command, base64 image data) can still blow up the RPC
+// payload over the websocket, so this bounds the worst case rather than the
+// common case.
+const TRANSCRIPT_CONTENT_MAX_CHARS = 20_000;
+
+function capTranscriptContent(text: string): string {
+  return text.length > TRANSCRIPT_CONTENT_MAX_CHARS
+    ? `${text.slice(0, TRANSCRIPT_CONTENT_MAX_CHARS)}\n… (truncated)`
+    : text;
+}
+
+function stringifyToolResultContent(content: unknown): string {
+  if (typeof content === "string") return capTranscriptContent(content);
+  if (Array.isArray(content)) {
+    return capTranscriptContent(
+      content
+        .map((part) =>
+          typeof part === "object" &&
+          part !== null &&
+          "text" in part &&
+          typeof part.text === "string"
+            ? part.text
+            : JSON.stringify(part),
+        )
+        .join("\n"),
+    );
+  }
+  return capTranscriptContent(JSON.stringify(content));
+}
+
+function mapClaudeContentBlock(block: unknown): ProviderSubagentTranscriptBlock | null {
+  if (typeof block !== "object" || block === null || !("type" in block)) return null;
+  switch (block.type) {
+    case "text":
+      return "text" in block && typeof block.text === "string"
+        ? { type: "text", text: block.text }
+        : null;
+    case "thinking":
+      return "thinking" in block && typeof block.thinking === "string"
+        ? { type: "thinking", thinking: block.thinking }
+        : null;
+    case "tool_use":
+      return "id" in block &&
+        typeof block.id === "string" &&
+        "name" in block &&
+        typeof block.name === "string"
+        ? {
+            type: "tool_use",
+            id: block.id,
+            name: block.name,
+            input: "input" in block ? block.input : {},
+          }
+        : null;
+    case "tool_result":
+      return "tool_use_id" in block && typeof block.tool_use_id === "string"
+        ? {
+            type: "tool_result",
+            toolUseId: block.tool_use_id,
+            content: stringifyToolResultContent("content" in block ? block.content : ""),
+            ...("is_error" in block && typeof block.is_error === "boolean"
+              ? { isError: block.is_error }
+              : {}),
+          }
+        : null;
+    default:
+      return null;
+  }
+}
+
+function mapClaudeHistoryMessageToTranscriptMessage(
+  message: ClaudeHistoryMessage,
+): ProviderSubagentTranscriptMessage | null {
+  if (message.type !== "user" && message.type !== "assistant") return null;
+  const body = message.message;
+  if (typeof body !== "object" || body === null || !("content" in body)) return null;
+  const content = body.content;
+  const blocks: Array<ProviderSubagentTranscriptBlock> =
+    typeof content === "string"
+      ? [{ type: "text", text: content }]
+      : Array.isArray(content)
+        ? content.map(mapClaudeContentBlock).filter((block) => block !== null)
+        : [];
+  if (blocks.length === 0) return null;
+  return { role: message.type, blocks };
+}
 
 const conversationIndexForUuid = (
   messages: ReadonlyArray<ClaudeHistoryMessage>,
@@ -477,6 +571,8 @@ export interface ClaudeAdapterLiveOptions {
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
   readonly getSessionMessages?: typeof getSessionMessages;
+  readonly getSubagentMessages?: typeof getSubagentMessages;
+  readonly listSubagents?: typeof listSubagents;
   readonly forkSession?: typeof forkSession;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -5503,6 +5599,139 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
+  const getSubagentTranscript: ClaudeAdapterShape["getSubagentTranscript"] = Effect.fn(
+    "getSubagentTranscript",
+  )(function* (threadId, agentId) {
+    const unavailable = {
+      _tag: "unavailable",
+    } as const satisfies ProviderSubagentTranscriptResult;
+
+    const context = yield* requireSession(threadId).pipe(Effect.orElseSucceed(() => undefined));
+    if (!context) return unavailable;
+    const sessionId = context.resumeSessionId;
+    if (!sessionId) return unavailable;
+
+    // Same dispatch shape as rollbackThread's history reads: the SDK reads
+    // process.env, so a subprocess isolates the provider's environment
+    // instead of mutating the server's; the single-executable has no Node
+    // to run a sibling script, so it hosts the worker as its own hidden
+    // subcommand instead.
+    const historyWorkerArguments = (yield* HostProcessIsExecutable)
+      ? ["__claude-history"]
+      : [
+          yield* path
+            .fromFileUrl(
+              new URL(
+                import.meta.url.endsWith(".ts")
+                  ? "../../claude-history-worker.ts"
+                  : "./claude-history-worker.mjs",
+                import.meta.url,
+              ),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                toRequestError(threadId, "thread/subagentTranscript", cause),
+              ),
+            ),
+        ];
+    const runScopedHistoryCommand = async (
+      method: "listSubagents" | "getSubagentMessages",
+      args: object,
+    ) => {
+      const result = await Effect.runPromise(
+        spawnAndCollect(
+          process.execPath,
+          ChildProcess.make(
+            process.execPath,
+            [...historyWorkerArguments, method, sessionId, encodeHistoryArgs(args)],
+            { env: { ...claudeEnvironment, ELECTRON_RUN_AS_NODE: "1" } },
+          ),
+        ).pipe(
+          Effect.timeout("30 seconds"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      );
+      if (result.code !== 0) throw new Error(result.stderr || "Claude history command failed.");
+      return result.stdout;
+    };
+
+    const listSubagentIds = (): Effect.Effect<ReadonlyArray<string>, ProviderAdapterError> =>
+      Effect.tryPromise({
+        try: async () => {
+          const readOptions = context.session.cwd ? { dir: context.session.cwd } : {};
+          if (options?.listSubagents) return options.listSubagents(sessionId, readOptions);
+          if (claudeEnvironment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR) {
+            return listSubagents(sessionId, readOptions);
+          }
+          return decodeSubagentIds(await runScopedHistoryCommand("listSubagents", readOptions));
+        },
+        catch: (cause) => toRequestError(threadId, "thread/subagentTranscript", cause),
+      });
+
+    const readSubagentMessages = (
+      candidateAgentId: string,
+      limit?: number,
+    ): Effect.Effect<ReadonlyArray<ClaudeHistoryMessage>, ProviderAdapterError> =>
+      Effect.tryPromise({
+        try: async () => {
+          const readOptions = {
+            ...(context.session.cwd ? { dir: context.session.cwd } : {}),
+            ...(limit !== undefined ? { limit } : {}),
+          };
+          if (options?.getSubagentMessages)
+            return options.getSubagentMessages(sessionId, candidateAgentId, readOptions);
+          if (claudeEnvironment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR) {
+            return getSubagentMessages(sessionId, candidateAgentId, readOptions);
+          }
+          return decodeSessionMessages(
+            await runScopedHistoryCommand("getSubagentMessages", {
+              ...readOptions,
+              agentId: candidateAgentId,
+            }),
+          );
+        },
+        catch: (cause) => toRequestError(threadId, "thread/subagentTranscript", cause),
+      });
+
+    // T3's tracked subagent id is usually already the SDK's own agent id
+    // (Task-tool spawns: `task_started.task_id` is that id verbatim — no
+    // correlation needed, confirmed against real on-disk data). Workflow
+    // members use a distinct, T3-synthesized id instead
+    // (`${coordinatorId}:wf:${index}`, see emitWorkflowMemberProgress), which
+    // isn't a real SDK id — for those (and as a defensive fallback for any
+    // other path that stores the id differently) fall back to searching by
+    // `parent_tool_use_id`, in case the tracked id is a tool_use_id instead.
+    const direct = yield* readSubagentMessages(agentId).pipe(Effect.orElseSucceed(() => []));
+    const matchedMessages =
+      direct.length > 0
+        ? direct
+        : yield* Effect.gen(function* () {
+            const candidateIds = yield* listSubagentIds().pipe(Effect.orElseSucceed(() => []));
+            for (const candidateId of candidateIds) {
+              const firstMessages = yield* readSubagentMessages(candidateId, 1).pipe(
+                Effect.orElseSucceed(() => []),
+              );
+              if (firstMessages[0]?.parent_tool_use_id === agentId) {
+                return yield* readSubagentMessages(candidateId).pipe(
+                  Effect.orElseSucceed(() => []),
+                );
+              }
+            }
+            return [];
+          });
+    if (matchedMessages.length === 0) return unavailable;
+
+    const transcriptMessages = matchedMessages
+      .map(mapClaudeHistoryMessageToTranscriptMessage)
+      .filter((message) => message !== null);
+    if (transcriptMessages.length === 0) return unavailable;
+
+    return {
+      _tag: "available",
+      messages: transcriptMessages,
+    } satisfies ProviderSubagentTranscriptResult;
+  });
+
   const respondToRequest: ClaudeAdapterShape["respondToRequest"] = Effect.fn("respondToRequest")(
     function* (threadId, requestId, decision) {
       const context = yield* requireSession(threadId);
@@ -5594,6 +5823,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
+    getSubagentTranscript,
     respondToRequest,
     respondToUserInput,
     stopSession,

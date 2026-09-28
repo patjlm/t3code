@@ -7,6 +7,7 @@ import {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  ProviderSubagentTranscriptResult,
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
@@ -240,6 +241,32 @@ describe("provider feedback", () => {
     expect(error.cause).toBe(cause);
     expect(error.message).toBe("Failed to upload feedback for thread thread-1.");
     expect(error.message).not.toContain("provider request secret");
+  });
+});
+
+describe("ProviderSubagentTranscriptResult", () => {
+  const decode = Schema.decodeUnknownSync(ProviderSubagentTranscriptResult);
+
+  it("decodes a tool_use block whose input key was dropped by JSON.stringify(undefined)", () => {
+    // A real regression: mapping a tool_use with no captured input used to
+    // produce `{ input: undefined }`, which JSON.stringify drops entirely —
+    // decoding the result then failed because `input` was a required key,
+    // discarding the whole transcript for one missing field.
+    const result = decode({
+      _tag: "available",
+      messages: [
+        {
+          role: "assistant",
+          blocks: [{ type: "tool_use", id: "toolu_1", name: "Bash" }],
+        },
+      ],
+    });
+    expect(result).toEqual({
+      _tag: "available",
+      messages: [
+        { role: "assistant", blocks: [{ type: "tool_use", id: "toolu_1", name: "Bash" }] },
+      ],
+    });
   });
 });
 

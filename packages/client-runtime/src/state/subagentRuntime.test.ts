@@ -415,6 +415,15 @@ describe("deriveAgentPanelModel", () => {
     expect(model.directAgents.map((agent) => agent.id)).toEqual(["direct-1"]);
   });
 
+  it("flattens direct spawns and workflow members into one stepper-ready list, excluding coordinators", () => {
+    const model = deriveAgentPanelModel({ agents: roster });
+    expect(model.flatAgents.map((agent) => agent.id)).toEqual([
+      "direct-1",
+      "wf-1:wf:0",
+      "wf-1:wf:1",
+    ]);
+  });
+
   it("counts idle deliberately and waiting as active", () => {
     const model = deriveAgentPanelModel({ agents: roster });
     expect(model.idleCount).toBe(1);

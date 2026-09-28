@@ -175,6 +175,8 @@ function makeHarness(config?: {
   readonly environment?: ClaudeAdapterLiveOptions["environment"];
   readonly getSessionMessages?: ClaudeAdapterLiveOptions["getSessionMessages"];
   readonly forkSession?: ClaudeAdapterLiveOptions["forkSession"];
+  readonly listSubagents?: ClaudeAdapterLiveOptions["listSubagents"];
+  readonly getSubagentMessages?: ClaudeAdapterLiveOptions["getSubagentMessages"];
 }) {
   const query = new FakeClaudeQuery();
   const queries = [query];
@@ -192,6 +194,8 @@ function makeHarness(config?: {
     modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     ...(config?.getSessionMessages ? { getSessionMessages: config.getSessionMessages } : {}),
     ...(config?.forkSession ? { forkSession: config.forkSession } : {}),
+    ...(config?.listSubagents ? { listSubagents: config.listSubagents } : {}),
+    ...(config?.getSubagentMessages ? { getSubagentMessages: config.getSubagentMessages } : {}),
     createQuery: (input) => {
       if (createInput && config?.getSessionMessages) queries.push(new FakeClaudeQuery());
       createInput = input;
@@ -8365,5 +8369,225 @@ describe("ClaudeAdapterLive", () => {
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
+  });
+
+  describe("getSubagentTranscript", () => {
+    const TASK_TOOL_USE_ID = "toolu_vrtx_task_1";
+
+    it.effect("uses the tracked agent id directly when it's already the SDK's own agent id", () => {
+      // The common real case: a plain Task-tool spawn's task_started.task_id
+      // (T3's tracked RuntimeSubagent.id) already equals the SDK's own agent
+      // id used by getSubagentMessages — no listSubagents/correlation needed.
+      const SDK_NATIVE_AGENT_ID = "a66f8bdedb80c5002";
+      const listSubagentsCalls: Array<unknown> = [];
+      const harness = makeHarness({
+        listSubagents: async () => {
+          listSubagentsCalls.push(true);
+          return [SDK_NATIVE_AGENT_ID];
+        },
+        getSubagentMessages: async (sessionId, agentId) => {
+          if (agentId !== SDK_NATIVE_AGENT_ID) return [];
+          return [
+            claudeHistoryMessage({
+              type: "user",
+              uuid: "native-first",
+              sessionId,
+              parentToolUseId: "toolu_vrtx_unrelated_spawn_call",
+              content: "find test files",
+            }),
+          ];
+        },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "go");
+
+        const result = yield* adapter.getSubagentTranscript!(session.threadId, SDK_NATIVE_AGENT_ID);
+        assert.deepEqual(result, {
+          _tag: "available",
+          messages: [{ role: "user", blocks: [{ type: "text", text: "find test files" }] }],
+        });
+        // Resolved on the first, direct attempt — never had to enumerate
+        // and probe every subagent in the session to find a match.
+        assert.equal(listSubagentsCalls.length, 0);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
+
+    it.effect(
+      "resolves the SDK subagent id via parent_tool_use_id and returns its transcript",
+      () => {
+        const harness = makeHarness({
+          listSubagents: async () => ["sdk-agent-a", "sdk-agent-b"],
+          getSubagentMessages: async (sessionId, agentId, options) => {
+            const full = !options?.limit;
+            if (agentId === "sdk-agent-a") {
+              return [
+                claudeHistoryMessage({
+                  type: "user",
+                  uuid: "sdk-agent-a-first",
+                  sessionId,
+                  parentToolUseId: "toolu_vrtx_other_task",
+                  content: "unrelated subagent prompt",
+                }),
+              ];
+            }
+            if (agentId === "sdk-agent-b") {
+              const first = claudeHistoryMessage({
+                type: "user",
+                uuid: "sdk-agent-b-first",
+                sessionId,
+                parentToolUseId: TASK_TOOL_USE_ID,
+                content: "explore the repo",
+              });
+              if (!full) return [first];
+              return [
+                first,
+                claudeHistoryMessage({
+                  type: "assistant",
+                  uuid: "sdk-agent-b-assistant",
+                  sessionId,
+                  parentToolUseId: TASK_TOOL_USE_ID,
+                  content: [
+                    { type: "thinking", thinking: "let me look around" },
+                    {
+                      type: "tool_use",
+                      id: "toolu_inner_1",
+                      name: "Grep",
+                      input: { pattern: "foo" },
+                    },
+                  ],
+                }),
+                claudeHistoryMessage({
+                  type: "user",
+                  uuid: "sdk-agent-b-tool-result",
+                  sessionId,
+                  parentToolUseId: TASK_TOOL_USE_ID,
+                  content: [
+                    { type: "tool_result", tool_use_id: "toolu_inner_1", content: "no matches" },
+                  ],
+                }),
+              ];
+            }
+            return [];
+          },
+        });
+        return Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+          const session = yield* adapter.startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            runtimeMode: "full-access",
+          });
+          yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "go");
+
+          const result = yield* adapter.getSubagentTranscript!(session.threadId, TASK_TOOL_USE_ID);
+          assert.equal(result._tag, "available");
+          if (result._tag !== "available") return;
+          assert.equal(result.messages.length, 3);
+          assert.deepEqual(result.messages[1], {
+            role: "assistant",
+            blocks: [
+              { type: "thinking", thinking: "let me look around" },
+              { type: "tool_use", id: "toolu_inner_1", name: "Grep", input: { pattern: "foo" } },
+            ],
+          });
+          assert.deepEqual(result.messages[2], {
+            role: "user",
+            blocks: [{ type: "tool_result", toolUseId: "toolu_inner_1", content: "no matches" }],
+          });
+        }).pipe(
+          Effect.provideService(Random.Random, makeDeterministicRandomService()),
+          Effect.provide(harness.layer),
+        );
+      },
+    );
+
+    it.effect("returns unavailable when no subagent matches the tool use id", () => {
+      const harness = makeHarness({
+        listSubagents: async () => ["sdk-agent-a"],
+        getSubagentMessages: async (sessionId, agentId) => {
+          if (agentId !== "sdk-agent-a") return [];
+          return [
+            claudeHistoryMessage({
+              type: "user",
+              uuid: "sdk-agent-a-first",
+              sessionId,
+              parentToolUseId: "toolu_vrtx_other_task",
+            }),
+          ];
+        },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "go");
+
+        const result = yield* adapter.getSubagentTranscript!(session.threadId, TASK_TOOL_USE_ID);
+        assert.deepEqual(result, { _tag: "unavailable" });
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
+
+    it.effect("returns unavailable when every message maps to no renderable blocks", () => {
+      const harness = makeHarness({
+        listSubagents: async () => ["sdk-agent-a"],
+        getSubagentMessages: async (sessionId) => [
+          claudeHistoryMessage({
+            type: "assistant",
+            uuid: "sdk-agent-a-first",
+            sessionId,
+            parentToolUseId: TASK_TOOL_USE_ID,
+            // Every block type here is unrecognized by mapClaudeContentBlock,
+            // so the message maps to no blocks and the whole result must not
+            // come back as a hollow `{ _tag: "available", messages: [] }`.
+            content: [{ type: "redacted_thinking", data: "opaque" }],
+          }),
+        ],
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "go");
+
+        const result = yield* adapter.getSubagentTranscript!(session.threadId, TASK_TOOL_USE_ID);
+        assert.deepEqual(result, { _tag: "unavailable" });
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
+
+    it.effect("returns unavailable for a thread with no resolvable session", () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const result = yield* adapter.getSubagentTranscript!(
+          ThreadId.make("thread-never-started"),
+          TASK_TOOL_USE_ID,
+        );
+        assert.deepEqual(result, { _tag: "unavailable" });
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
   });
 });

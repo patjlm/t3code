@@ -452,6 +452,36 @@ describe("rightPanelStore", () => {
     ).toHaveLength(2);
   });
 
+  it("opens agent-detail as a distinct singleton surface from agents", () => {
+    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().open(refA, "agent-detail");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "agent-detail",
+      surfaces: [
+        { id: "agents", kind: "agents" },
+        { id: "agent-detail", kind: "agent-detail", agentId: null },
+      ],
+    });
+  });
+
+  it("openAgentDetail retargets the existing agent-detail surface instead of duplicating it", () => {
+    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().openAgentDetail(refA, "agent-1");
+    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().openAgentDetail(refA, "agent-2");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "agent-detail",
+      surfaces: [
+        { id: "agents", kind: "agents" },
+        { id: "agent-detail", kind: "agent-detail", agentId: "agent-2" },
+      ],
+    });
+  });
+
   it("reopening an inactive singleton activates its existing surface", () => {
     useRightPanelStore.getState().open(refA, "diff");
     useRightPanelStore.getState().open(refA, "agents");
