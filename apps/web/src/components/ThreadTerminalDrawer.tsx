@@ -271,14 +271,20 @@ const TERMINAL_PALETTES = {
 };
 
 // Read visibility when WASM finishes loading, not when setup starts.
-function withLiveVisibility(
+// Getters built here, outside the component, stay clear of the React Compiler's
+// object-literal getter bailout.
+function withLiveTerminalOptions(
   visibleRef: { readonly current: boolean },
-  options: Omit<GhosttyTerminalSurfaceOptions, "visible">,
+  readLinksRequireModifierClick: () => boolean,
+  options: Omit<GhosttyTerminalSurfaceOptions, "visible" | "linksRequireModifierClick">,
 ): GhosttyTerminalSurfaceOptions {
   return {
     ...options,
     get visible() {
       return visibleRef.current;
+    },
+    get linksRequireModifierClick() {
+      return readLinksRequireModifierClick();
     },
   };
 }
@@ -680,7 +686,7 @@ function TerminalSessionViewport({
 
     const setup = async (): Promise<(() => void) | null> => {
       const setupFont = terminalFontRef.current;
-      const terminalOptions = withLiveVisibility(visibleRef, {
+      const terminalOptions = withLiveTerminalOptions(visibleRef, readLinksRequireModifierClick, {
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
         onData: (data) => handleData(data),
@@ -689,9 +695,6 @@ function TerminalSessionViewport({
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
-        get linksRequireModifierClick() {
-          return readLinksRequireModifierClick();
-        },
         // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
