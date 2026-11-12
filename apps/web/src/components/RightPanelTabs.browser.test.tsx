@@ -3,6 +3,7 @@ import "~/index.css";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
+import { paneLayout } from "~/terminalPaneLayout";
 import { render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import { RightPanelTabs } from "./RightPanelTabs";
@@ -57,6 +58,7 @@ const surfaces: RightPanelSurface[] = Array.from({ length: 16 }, (_, index) => (
   resourceId: `${index}`,
   terminalIds: [`${index}`],
   activeTerminalId: `${index}`,
+  layout: paneLayout(`${index}`),
 }));
 
 describe("RightPanelTabs", () => {
